@@ -2,6 +2,12 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.4] - 2026-11-13
+
+### Fixed
+
+- Long files are explained from head to tail: when the pending groups exceed the input budget, the request is split into several batches instead of silently dropping the groups that do not fit, so L2 no longer stops halfway through the file.
+
 ## [0.1.3] - 2026-11-13
 
 ### Fixed
