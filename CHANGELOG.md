@@ -2,6 +2,12 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.5] - 2026-11-13
+
+### Fixed
+
+- L3 no longer echoes the source line. Call statements now describe what the call does, multi-line blocks are named by structure (`try / except block`, `with block`, …) with their line count, and `if` / `for` show the bare condition without the keyword and trailing colon.
+
 ## [0.1.4] - 2026-11-13
 
 ### Fixed
