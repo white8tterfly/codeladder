@@ -6,7 +6,8 @@
   "config.language.zh": "Chinese (中文)",
   "config.language.en": "English",
   "config.language.desc": "Language used by CodeLadder explanations and the panel. `auto` follows the IDE display language.",
-  "config.llm.baseUrl.desc": "Fallback OpenAI-compatible API base URL (e.g. `https://api.deepseek.com/v1`). CodeLadder first tries a language model exposed by the IDE (`vscode.lm`); these settings are used only when none is available. Leave empty to use the deterministic project index only.",
-  "config.llm.apiKey.desc": "API key for the fallback endpoint (stored in plain text; recommended for personal devices only).",
-  "config.llm.model.desc": "Model name, e.g. `deepseek-chat`."
+  "config.llm.baseUrl.desc": "OpenAI-compatible API base URL, domain level only — e.g. `https://api.deepseek.com`. CodeLadder appends `/chat/completions` itself, so do not include the endpoint path. A model exposed by the IDE (`vscode.lm`) is preferred; when none is available this endpoint is required, because the business context and the L1/L2 tiers are generated only by a model. Set `baseUrl`, `apiKey` and `model` together.",
+  "config.llm.apiKey.desc": "API key for the model endpoint (stored in plain text; recommended for personal devices only).",
+  "config.llm.model.desc": "Model name, e.g. `deepseek-chat`.",
+  "config.llm.maxInputChars.desc": "Maximum characters of code sent per request (default 24000). Only changed units are sent; when the budget is exceeded the remaining units are left for the next run."
 }

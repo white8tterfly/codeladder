@@ -55,8 +55,8 @@ Most "explain this code" tools give you one long answer in a chat window, discon
 
 | Tier | Name | What you read | Where it comes from |
 | --- | --- | --- | --- |
-| **L1** | Intent | One sentence per unit: what this piece is trying to achieve, in plain language | Comments / docstrings when available, otherwise deterministic templates; optionally refined by AI |
-| **L2** | Steps | A concrete step: “read the file, parse JSON, return a list” | Deterministic projection of the syntax tree |
+| **L1** | Intent | One explanation per function / interface / class, plus top-level segments (imports, setup, `__main__` startup) so every code line is covered | Model-written (a model is required) |
+| **L2** | Steps | One explanation per code block (function body, branch, loop, module level), not per line | Model-written (a model is required) |
 | **L3** | Logic | The structural shape: function signature, condition, loop source, return value, call expression | 100% syntax tree, no guessing |
 | **L4** | Code | The original code snippet with line badges | The source file itself |
 
@@ -93,7 +93,7 @@ The context card at the top of the panel summarizes this, so the explanation is 
 
 ### Optional AI enrichment
 
-CodeLadder works fully offline. If you configure an OpenAI-compatible endpoint, the model is asked to rewrite L1/L2 wording and the project summary, anchored to the deterministic unit list. If the request fails, times out, or returns malformed data, CodeLadder silently keeps the deterministic result.
+CodeLadder works fully offline for the deterministic tiers (L3 logic, L4 code and the technical background). The business context and L1/L2 are model-written: configure an OpenAI-compatible endpoint, and the model is asked to explain each group, anchored to the AST-derived groups. If no model is available or the request fails, these tiers are blocked with a setup prompt instead of falling back to templates.
 
 ### Bilingual, switchable at runtime
 
@@ -128,11 +128,12 @@ The index updates automatically when a supported file is saved.
 | Setting | Default | Description |
 | --- | --- | --- |
 | `codeLadder.language` | `auto` | Explanation and panel language: `auto`, `zh`, `en` |
-| `codeLadder.llm.baseUrl` | empty | Fallback OpenAI-compatible base URL, e.g. `https://api.deepseek.com/v1` |
-| `codeLadder.llm.apiKey` | empty | API key for the fallback endpoint |
+| `codeLadder.llm.baseUrl` | empty | OpenAI-compatible base URL at domain level, e.g. `https://api.deepseek.com` — CodeLadder appends `/chat/completions` itself |
+| `codeLadder.llm.apiKey` | empty | API key for the model endpoint |
 | `codeLadder.llm.model` | empty | Model name, e.g. `deepseek-chat` |
+| `codeLadder.llm.maxInputChars` | `24000` | Maximum code characters sent per request; overflow is left for the next run |
 
-CodeLadder asks the IDE for a built-in language model first (the `vscode.lm` API). When the host exposes one — for example a Copilot Chat model — no API key is needed. If nothing is available, it falls back to the settings above. Leave all three empty to use the deterministic engine only. The API key is stored in plain text in your settings file, so only use it on a personal device.
+**A model is required for the semantic layers.** CodeLadder asks the IDE for a built-in language model first (the `vscode.lm` API); when the host exposes one — for example a Copilot Chat model — no API key is needed. Otherwise set the endpoint settings above. Without a model, the business context and the L1/L2 tiers are not generated at all: the panel shows a setup prompt and keeps only L3 structure and L4 code, which come from the syntax tree. The API key is stored in plain text in your settings file, so only use it on a personal device.
 
 ---
 
@@ -155,15 +156,24 @@ CodeLadder asks the IDE for a built-in language model first (the `vscode.lm` API
 1. **Parse** — the file is parsed with a tree-sitter grammar compiled to WebAssembly.
 2. **Derive units** — the syntax tree is converted into semantic units with exact line ranges.
 3. **Index the project** — supported files in the workspace are scanned for symbols, imports and reverse references.
-4. **Project four tiers** — deterministic templates turn each unit into L1–L4 text.
-5. **Optional AI pass** — if configured, the model refines the wording using the unit list and project context; results are merged back by unit index.
+4. **Project the deterministic tiers** — L3 logic, L4 code and the technical context come straight from the syntax tree and the project index.
+5. **Generate the semantic layers** — the model writes the business context and one explanation per L1 function/class group and per L2 code block, from the code plus project facts. Results are merged back by group index; line numbers and unit boundaries always stay AST-derived. If no model is available or the request fails, these layers are blocked with a setup prompt instead of falling back to templates.
+
+### Token control
+
+- **Reuse first.** Results are cached per file and language. Running the command again on an unchanged file makes **no model call**.
+- **Incremental.** Groups are keyed by their code content (line shifts don't invalidate them). Only new or changed groups are sent; unchanged L1/L2 are reused.
+- **Summary fingerprint.** The business context is regenerated only when the file's docstring, module facts, dependency/usage facts or unit skeleton change — not on every internal edit.
+- **Budget.** Only the code for the requested groups is sent (the outline is cheap). `maxInputChars` caps the payload; groups that don't fit are left for the next run, and the status bar tells you how many were covered.
+- **Deduplicated.** Identical requests already in flight share one call, so double-clicks or a language switch don't double-bill.
+- **Reset on config change.** Changing the model settings clears the cache, so old model output is never presented as new model output.
 
 ---
 
 ## Privacy
 
-- Parsing, indexing and projection run entirely on your machine.
-- No code or metadata leaves your machine unless you configure an LLM endpoint.
+- Parsing, indexing and the deterministic tiers run entirely on your machine.
+- The semantic layers send the current file and project facts to the configured model endpoint; nothing is sent before you run the command.
 - The project index is kept in memory only; nothing is written to disk.
 
 ---
@@ -171,6 +181,7 @@ CodeLadder asks the IDE for a built-in language model first (the `vscode.lm` API
 ## Requirements
 
 - VS Code 1.85 or newer, or a compatible IDE such as Trae.
+- A language model exposed by the IDE, or an OpenAI-compatible endpoint configured in settings. Business context and L1/L2 cannot be generated without one.
 - No Python, Java, Rust or Go toolchain is required — grammars are bundled with the extension.
 
 ---
@@ -178,7 +189,8 @@ CodeLadder asks the IDE for a built-in language model first (the `vscode.lm` API
 ## Troubleshooting
 
 - **“CodeLadder: open a supported source file first.”** — the active editor is not a supported language; open a `.py`, `.ts`, `.tsx`, `.c`, `.h`, `.cpp`, `.java`, `.rs` or `.go` file.
-- **The explanation looks generic.** — that file has little structure or comments, and no LLM is configured. Add the optional LLM settings for richer wording.
+- **Business context and L1/L2 say “No model” or “Model request failed”.** — configure `codeLadder.llm.baseUrl`, `apiKey` and `model`, then click **Retry** in the panel. L3 structure and L4 code stay available without a model.
+- **The panel shows an HTTP error.** — the error text is shown verbatim (status code and response snippet); check the endpoint URL, key, model name and network.
 - **The context card is empty.** — the workspace has not been indexed yet, or the file sits outside the workspace folder. Run **Rebuild Project Index**.
 - **Blocks point at the wrong lines after editing.** — run **Regenerate**; the panel always reflects the last generation.
 - **First run is slow on a large repository.** — indexing is capped (2000 files, 512 KB per file) and cached in memory; later runs reuse it.

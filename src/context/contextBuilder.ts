@@ -1,8 +1,8 @@
 // 当前文件的工程上下文：模块职责、依赖、使用方、符号提示。
-// 输出两部分：给 LLM 的上下文事实 + 面板顶部的「业务背景」卡片。
+// 这里只产出「可核实的事实」：技术背景直接上屏，facts 作为模型提示的上下文。
+// 业务背景属于语义层，必须由模型归纳，不在本地用模板猜测。
 
 import * as vscode from 'vscode';
-import type { ContextSummary } from '../model/types';
 import type { Lang } from '../i18n';
 import type { SourceFileInfo, ProjectIndex } from '../index/projectIndex';
 import type { LanguageId } from '../lang/languages';
@@ -16,7 +16,13 @@ export interface FileContext {
   languageName: string;
   /** 符号名 → 「文件:行号 · 说明」，用于把调用解释锚定到定义处 */
   hints: Record<string, string>;
-  summary: ContextSummary;
+  /** 技术背景：页面直接展示的确定性事实 */
+  tech: {
+    bullets: string[];
+    sources: string[];
+  };
+  /** 给模型的上下文事实（不含任何业务结论） */
+  facts: string[];
 }
 
 export function buildFileContext(
@@ -31,26 +37,34 @@ export function buildFileContext(
   const langId: LanguageId = self?.lang ?? fromVscodeLanguageId(doc.languageId) ?? 'python';
   const entry = isEntryFile(source, langId);
 
-  const bullets: string[] = [];
+  const techBullets: string[] = [];
   const sources = new Set<string>();
   const hints: Record<string, string> = {};
+  const symbols = self?.symbols ?? [];
 
   // 本文件自己的符号
-  for (const sym of self?.symbols ?? []) {
+  for (const sym of symbols) {
     hints[sym.name] = hintOf(sym.file, sym.line, sym.doc);
   }
+
+  // ---- 技术页：语言、路径、原始说明、符号、依赖、引用（全部为确定性事实） ----
+  techBullets.push(pick(
+    lang,
+    `语言与文件：${displayName(langId)} · ${relPath}`,
+    `Language & file: ${displayName(langId)} · ${relPath}`,
+  ));
   if (self?.doc) {
-    bullets.push(pick(lang, `本文件职责：${clip(self.doc, 90)}`, `Role: ${clip(self.doc, 90)}`));
+    techBullets.push(pick(lang, `原始说明：${clip(self.doc, 120)}`, `Original note: ${clip(self.doc, 120)}`));
   }
-  if (self && self.symbols.length > 0) {
-    const list = self.symbols
+  if (symbols.length > 0) {
+    const list = symbols
       .slice(0, 5)
       .map((s) => `${s.name}（L${s.line}）`)
       .join(pick(lang, '、', ', '));
-    bullets.push(pick(
+    techBullets.push(pick(
       lang,
-      `本文件定义：${list}${self.symbols.length > 5 ? ' 等' : ''}`,
-      `Defines: ${list}${self.symbols.length > 5 ? ' and more' : ''}`,
+      `本文件定义：${list}${symbols.length > 5 ? ' 等' : ''}`,
+      `Defines: ${list}${symbols.length > 5 ? ' and more' : ''}`,
     ));
   }
 
@@ -76,7 +90,7 @@ export function buildFileContext(
       .slice(0, 4)
       .map((d) => `${d.relPath}${d.doc ? ` (${clip(d.doc, 28)})` : ''}`)
       .join(pick(lang, '；', '; '));
-    bullets.push(pick(lang, `依赖本地模块：${list}`, `Local dependencies: ${list}`));
+    techBullets.push(pick(lang, `依赖本地模块：${list}`, `Local dependencies: ${list}`));
   }
 
   // 谁在使用本文件
@@ -89,36 +103,31 @@ export function buildFileContext(
         return names.length > 0 ? `${f.relPath} (${names.join(', ')})` : f.relPath;
       })
       .join(pick(lang, '、', ', '));
-    bullets.push(pick(lang, `被这些文件引用：${list}`, `Used by: ${list}`));
+    techBullets.push(pick(lang, `被这些文件引用：${list}`, `Used by: ${list}`));
     importers.slice(0, 6).forEach((f) => sources.add(f.relPath));
   }
 
   if (entry) {
-    bullets.push(pick(
+    techBullets.push(pick(
       lang,
       '含程序入口（main）：直接运行时从这里启动。',
       'Has a program entry (main): execution starts here.',
     ));
   }
 
-  const fallback = pick(
-    lang,
-    '无模块说明，按定义与引用关系推断',
-    'no module docstring; inferred from definitions and references',
-  );
-  const summaryText = `${moduleName || relPath}: ${self?.doc ? clip(self.doc, 100) : fallback}`;
+  const sourceList = Array.from(sources).slice(0, 12);
+  const bullets = techBullets.slice(0, 8);
   return {
     moduleName,
     relPath,
     entry,
     languageName: displayName(langId),
     hints,
-    summary: {
-      summary: summaryText,
-      bullets: bullets.slice(0, 6),
-      sources: Array.from(sources).slice(0, 12),
-      fidelity: 'ok',
+    tech: {
+      bullets,
+      sources: sourceList,
     },
+    facts: bullets,
   };
 }
 

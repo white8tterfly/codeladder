@@ -8,6 +8,14 @@ import type { LineRange, SemanticUnit, UnitFacts, UnitKind } from '../model/type
 
 type SN = Parser.SyntaxNode;
 
+/** 遍历上下文：记录当前所属的函数/类与代码块，供 L1/L2 聚合 */
+interface WalkCtx {
+  l1?: string;
+  block: string;
+}
+
+const MODULE: WalkCtx = { block: 'module' };
+
 export function derivePythonUnits(root: SN): SemanticUnit[] {
   const units: SemanticUnit[] = [];
   let counter = 0;
@@ -17,21 +25,29 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
     return { start: nodeStartLine(startNode), end: nodeEndLine(endNode ?? startNode) };
   }
 
-  function emit(kind: UnitKind, facts: Omit<UnitFacts, 'kind'>, node: SN, endNode?: SN, leadLine?: number): void {
+  function emit(kind: UnitKind, facts: Omit<UnitFacts, 'kind'>, node: SN, endNode?: SN, leadLine?: number, ctx: WalkCtx = MODULE): SemanticUnit {
     const r = rangeOf(node, endNode);
     const lines: LineRange[] = [{ start: leadLine !== undefined ? Math.min(r.start, leadLine) : r.start, end: r.end }];
-    units.push({ id: nextId(), lines, facts: { ...facts, kind } });
+    const unit: SemanticUnit = {
+      id: nextId(),
+      lines,
+      facts: { ...facts, kind },
+      containerId: ctx.l1,
+      blockId: ctx.block,
+    };
+    units.push(unit);
+    return unit;
   }
 
   // 处理单个语句节点
-  function emitStatement(node: SN, leadLine?: number, commentText?: string): void {
+  function emitStatement(node: SN, ctx: WalkCtx, leadLine?: number, commentText?: string): void {
     const t = node.type;
     const withComment = (f: Omit<UnitFacts, 'kind'>): Omit<UnitFacts, 'kind'> => (commentText ? { ...f, comment: commentText } : f);
 
     // 装饰器包裹的定义 → 解包
     if (t === 'decorated_definition') {
       const def = field(node, 'definition');
-      if (def) { emitStatement(def, leadLine, commentText); }
+      if (def) { emitStatement(def, ctx, leadLine, commentText); }
       return;
     }
 
@@ -40,7 +56,7 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
       const inner = node.namedChild(0);
       if (inner) {
         if (inner.type === 'assignment') {
-          emitAssignment(inner, node, leadLine, commentText);
+          emitAssignment(inner, node, ctx, leadLine, commentText);
           return;
         }
         if (inner.type === 'call') {
@@ -50,7 +66,7 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
             name: fn ? oneLine(fn) : '',
             callExpr: oneLine(inner),
             signature: oneLine(inner),
-          }), node, node, leadLine);
+          }), node, node, leadLine, ctx);
           return;
         }
         if (inner.type === 'string') {
@@ -58,19 +74,19 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
           return;
         }
       }
-      emit('statement', withComment({ nodeType: t, signature: oneLine(node) }), node, node, leadLine);
+      emit('statement', withComment({ nodeType: t, signature: oneLine(node) }), node, node, leadLine, ctx);
       return;
     }
 
     if (t === 'import_statement') {
       const n = field(node, 'name');
-      emit('import', withComment({ nodeType: t, name: oneLine(n), base: oneLine(n), signature: oneLine(node) }), node, node, leadLine);
+      emit('import', withComment({ nodeType: t, name: oneLine(n), base: oneLine(n), signature: oneLine(node) }), node, node, leadLine, ctx);
       return;
     }
 
     if (t === 'import_from_statement') {
       const mod = field(node, 'module_name');
-      emit('import_from', withComment({ nodeType: t, base: oneLine(mod), name: oneLine(mod), signature: oneLine(node) }), node, node, leadLine);
+      emit('import_from', withComment({ nodeType: t, base: oneLine(mod), name: oneLine(mod), signature: oneLine(node) }), node, node, leadLine, ctx);
       return;
     }
 
@@ -80,8 +96,10 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
       const sup = field(node, 'superclasses');
       const base = sup ? sup.namedChildren.map((c) => oneLine(c)).join(', ') : '';
       const sig = `class ${name}${base ? `(${base})` : ''}`;
-      emit('class', withComment({ nodeType: t, name, base, signature: sig }), node, sup ?? nameNode ?? node, leadLine);
-      walkBody(node);
+      const unit = emit('class', withComment({ nodeType: t, name, base, signature: sig }), node, sup ?? nameNode ?? node, leadLine, ctx);
+      unit.blockId = unit.id;
+      const inner: WalkCtx = { l1: unit.id, block: unit.id };
+      walkBody(node, inner);
       return;
     }
 
@@ -92,17 +110,21 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
       const ret = oneLine(field(node, 'return_type'));
       const sig = `def ${name}${params}${ret ? ` -> ${ret}` : ''}`;
       const headerEnd = field(node, 'return_type') ?? field(node, 'parameters') ?? nameNode;
-      emit('function', withComment({ nodeType: t, name, signature: sig }), node, headerEnd ?? node, leadLine);
-      walkBody(node);
+      const unit = emit('function', withComment({ nodeType: t, name, signature: sig }), node, headerEnd ?? node, leadLine, ctx);
+      unit.blockId = unit.id;
+      const inner: WalkCtx = { l1: unit.id, block: unit.id };
+      walkBody(node, inner);
       return;
     }
 
     if (t === 'if_statement') {
       const cond = oneLine(field(node, 'condition'));
       const headerEnd = field(node, 'condition');
-      emit('if', withComment({ nodeType: t, condition: cond, signature: `if ${cond}:` }), node, headerEnd ?? node, leadLine);
-      walkBody(node);
-      walkAlt(field(node, 'alternative'));
+      const unit = emit('if', withComment({ nodeType: t, condition: cond, signature: `if ${cond}:` }), node, headerEnd ?? node, leadLine, ctx);
+      unit.blockId = unit.id;
+      const inner: WalkCtx = { l1: ctx.l1, block: unit.id };
+      walkBody(node, inner);
+      walkAlt(field(node, 'alternative'), { ...inner, block: `${unit.id}:alt` });
       return;
     }
 
@@ -111,22 +133,25 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
       const right = oneLine(field(node, 'right'));
       const sig = `for ${left} in ${right}:`;
       const headerEnd = field(node, 'right') ?? field(node, 'left');
-      emit('for', withComment({ nodeType: t, condition: `${left} in ${right}`, signature: sig }), node, headerEnd ?? node, leadLine);
-      walkBody(node);
+      const unit = emit('for', withComment({ nodeType: t, condition: `${left} in ${right}`, signature: sig }), node, headerEnd ?? node, leadLine, ctx);
+      unit.blockId = unit.id;
+      const inner: WalkCtx = { l1: ctx.l1, block: unit.id };
+      walkBody(node, inner);
+      walkAlt(field(node, 'alternative'), { ...inner, block: `${unit.id}:alt` });
       return;
     }
 
     if (t === 'return_statement') {
       const ret = node.namedChild(0);
-      emit('return', withComment({ nodeType: t, returns: oneLine(ret), signature: oneLine(node) }), node, node, leadLine);
+      emit('return', withComment({ nodeType: t, returns: oneLine(ret), signature: oneLine(node) }), node, node, leadLine, ctx);
       return;
     }
 
     // 兜底：其它语句
-    emit('statement', withComment({ nodeType: t, signature: oneLine(node) }), node, node, leadLine);
+    emit('statement', withComment({ nodeType: t, signature: oneLine(node) }), node, node, leadLine, ctx);
   }
 
-  function emitAssignment(assign: SN, stmtNode: SN, leadLine?: number, commentText?: string): void {
+  function emitAssignment(assign: SN, stmtNode: SN, ctx: WalkCtx, leadLine?: number, commentText?: string): void {
     const withComment = (f: Omit<UnitFacts, 'kind'>): Omit<UnitFacts, 'kind'> => (commentText ? { ...f, comment: commentText } : f);
     const left = field(assign, 'left');
     const right = field(assign, 'right');
@@ -138,7 +163,7 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
         name: oneLine(left),
         value: oneLine(typeNode),
         signature: `${oneLine(left)}: ${oneLine(typeNode)}`,
-      }), stmtNode, stmtNode, leadLine);
+      }), stmtNode, stmtNode, leadLine, ctx);
       return;
     }
     emit('assignment', withComment({
@@ -146,11 +171,11 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
       target: oneLine(left),
       value: oneLine(right),
       signature: oneLine(stmtNode),
-    }), stmtNode, stmtNode, leadLine);
+    }), stmtNode, stmtNode, leadLine, ctx);
   }
 
   // 遍历一个块内的语句（含「定义体内部注释」对齐到首个语句）
-  function walk(children: SN[]): void {
+  function walk(children: SN[], ctx: WalkCtx): void {
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
       if (child.type === 'comment') {
@@ -173,30 +198,30 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
       if (!commentText && next && next.type === 'comment' && nodeStartLine(next) === nodeEndLine(child)) {
         commentText = stripHashComment(next.text);
       }
-      emitStatement(child, leadLine, commentText);
+      emitStatement(child, ctx, leadLine, commentText);
     }
   }
 
   // 函数 / 类 / 条件 / 循环的「体」：体内部直接挂在定义节点下的注释，视为体首语句的前导注释
-  function walkBody(defNode: SN): void {
+  function walkBody(defNode: SN, ctx: WalkCtx): void {
     const body = field(defNode, 'body') ?? field(defNode, 'consequence');
     const interiorComments: SN[] = defNode.namedChildren.filter((c) => c.type === 'comment');
     const bodyChildren: SN[] = body ? body.namedChildren : [];
-    walk([...interiorComments, ...bodyChildren]);
+    walk([...interiorComments, ...bodyChildren], ctx);
   }
 
-  function walkAlt(alt: SN | null): void {
+  function walkAlt(alt: SN | null, ctx: WalkCtx): void {
     if (!alt) { return; }
     if (alt.type === 'block') {
-      walk(alt.namedChildren);
+      walk(alt.namedChildren, ctx);
       return;
     }
     if (alt.type === 'if_statement') {
       // elif 链
-      emitStatement(alt);
+      emitStatement(alt, ctx);
       return;
     }
-    walk(alt.namedChildren);
+    walk(alt.namedChildren, ctx);
   }
 
   // ---- 顶层：模块头部（编码声明 + docstring）单独成块 ----
@@ -222,11 +247,11 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
       .split('\n')
       .map((s) => s.trim())
       .find((s) => s.length > 0) ?? '';
-    emit('docstring', { nodeType: 'docstring', comment: summary || undefined, signature: '"""…"""' }, first, last);
+    emit('docstring', { nodeType: 'docstring', comment: summary || undefined, signature: '"""…"""' }, first, last, undefined, MODULE);
   }
 
   // 剩余顶层语句
-  walk(moduleChildren.slice(idx));
+  walk(moduleChildren.slice(idx), MODULE);
 
   return units;
 }

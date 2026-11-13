@@ -185,6 +185,11 @@ header{position:relative;z-index:1;flex:0 0 auto;display:flex;align-items:center
 .ctx-bullets li::marker{color:var(--tier)}
 .ctx-sources{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:9px;font-size:10px;color:var(--ink-3)}
 .ctx-src{font-family:var(--mono);background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+.ctx-tabs{display:flex;gap:4px;min-width:0}
+.ctx-tab{font:600 10.5px/1 var(--mono);letter-spacing:.04em;padding:5px 9px;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--ink-3);cursor:pointer;transition:background .15s ease,color .15s ease,border-color .15s ease}
+.ctx-tab:hover{background:var(--surface-2);color:var(--ink-2)}
+.ctx-tab.active{background:var(--tier-soft);border-color:var(--tier);color:var(--ink)}
+.ctx-head .fid{margin-left:auto}
 
 /* ---- 四档阶梯 ---- */
 .tierbar{position:relative;z-index:1;flex:0 0 auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;padding:12px 20px 0}
@@ -243,6 +248,23 @@ main{position:relative;z-index:1;flex:1 1 auto;overflow:auto;min-height:0;scroll
 .empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:56px 24px;text-align:center;color:var(--ink-3);font-size:12.5px}
 .empty-art{width:52px;height:52px;color:var(--tier);opacity:.55}
 
+/* ---- 语义层未就绪：业务背景 / L1 / L2 必须由模型生成 ---- */
+.gate{display:flex;flex-direction:column;align-items:center;gap:10px;padding:46px 26px;text-align:center;background:var(--surface);border:1px dashed var(--line-strong);border-radius:12px;box-shadow:var(--shadow-1)}
+.gate-icon{width:38px;height:38px;color:var(--ai);opacity:.85}
+.gate-title{font-size:13.5px;font-weight:700;letter-spacing:-.005em}
+.gate-body{max-width:540px;margin:0;font-size:12px;line-height:1.65;color:var(--ink-2)}
+.gate-err{max-width:100%;font-family:var(--mono);font-size:10.5px;color:var(--ai);background:var(--ai-bg);border-radius:6px;padding:4px 9px;overflow-wrap:anywhere}
+.gate-actions{display:flex;gap:8px;margin-top:2px}
+.gate-dots{display:inline-flex;gap:4px;margin-bottom:2px}
+.gate-dots i{width:5px;height:5px;border-radius:50%;background:var(--tier);animation:gatePulse 1.1s ease-in-out infinite}
+.gate-dots i:nth-child(2){animation-delay:.16s}
+.gate-dots i:nth-child(3){animation-delay:.32s}
+@keyframes gatePulse{0%,80%,100%{opacity:.22;transform:scale(.8)}40%{opacity:1;transform:none}}
+.btn{font:600 12px/1 var(--sans);padding:8px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);cursor:pointer;transition:border-color .15s ease,background .15s ease,transform .15s ease}
+.btn:hover{border-color:var(--tier);transform:translateY(-1px)}
+.btn.primary{background:var(--tier);border-color:var(--tier);color:#062320}
+.ctx-cta-row{display:flex;gap:8px;margin-top:9px}
+
 @media (max-width:620px){
   header{padding:12px 14px 10px}
   .legend .item span:not(.dot){display:none}
@@ -266,6 +288,7 @@ const JS = `
   var currentTier = 'L1';
   var pinnedIdx = -1;
   var ctxCollapsed = false;
+  var ctxPage = 'business';
 
   // VS Code 会在 body 上挂主题类；镜像到 html 上，样式再用 data-theme 切换令牌
   function syncTheme(){
@@ -311,6 +334,37 @@ const JS = `
     return '<span class="fid fid-ok">' + UI.fidOk + '</span>';
   }
 
+  // 语义层状态：业务背景 / L1 / L2 必须由模型生成，未就绪时不展示模板内容
+  function semState(){
+    return (payload && payload.context && payload.context.state) || 'loading';
+  }
+
+  function gateHtml(){
+    var s = semState();
+    var loading = s === 'loading';
+    var failed = s === 'failed';
+    var title = loading ? UI.llmLoadingTitle : (failed ? UI.llmFailedTitle : UI.llmNoModelTitle);
+    var body = loading ? UI.llmLoadingBody : (failed ? UI.llmFailedBody : UI.llmNoModelBody);
+    var err = (failed && payload.context.error)
+      ? '<div class="gate-err">' + esc(payload.context.error) + '</div>'
+      : '';
+    var dots = loading ? '<div class="gate-dots" aria-hidden="true"><i></i><i></i><i></i></div>' : '';
+    var actions = loading ? '' :
+      '<div class="gate-actions">' +
+        '<button type="button" class="btn primary gate-act" data-act="openSettings">' + esc(UI.btnConfigure) + '</button>' +
+        '<button type="button" class="btn gate-act" data-act="retry">' + esc(UI.btnRetry) + '</button>' +
+      '</div>';
+    return '<div class="gate" role="status">' + dots +
+      '<svg class="gate-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+        '<path d="M12 3 3 20h18L12 3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>' +
+        '<path d="M12 9v5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' +
+        '<circle cx="12" cy="17" r="1" fill="currentColor"/>' +
+      '</svg>' +
+      '<div class="gate-title">' + esc(title) + '</div>' +
+      '<p class="gate-body">' + esc(body) + '</p>' + err + actions +
+    '</div>';
+  }
+
   function applyTier(t){
     document.documentElement.setAttribute('data-tier', t);
     var tabs = document.querySelectorAll('.tier-tab');
@@ -341,18 +395,48 @@ const JS = `
 
   function renderContext(ctx){
     var el = document.getElementById('ctx');
-    if(!ctx || !ctx.summary){ el.style.display = 'none'; return; }
-    var fid = fidBadge(ctx.fidelity);
-    var bullets = (ctx.bullets || []).map(function(b){ return '<li>' + esc(b) + '</li>'; }).join('');
-    var sources = (ctx.sources || []).map(function(s){ return '<span class="ctx-src">' + esc(s) + '</span>'; }).join('');
+    if(!ctx){ el.style.display = 'none'; return; }
+    var state = ctx.state || 'ready';
+    var ready = state === 'ready';
+    var fid = ready
+      ? fidBadge(ctx.fidelity)
+      : (state === 'loading' ? '' : '<span class="fid fid-ai">' + esc(state === 'no-model' ? UI.fidNoModel : UI.fidFailed) + '</span>');
+    var tech = ctx.tech || { bullets: [], sources: [] };
+    var isTech = ctxPage === 'tech';
+    var body;
+    if(isTech){
+      var techBullets = (tech.bullets || []).map(function(b){ return '<li>' + esc(b) + '</li>'; }).join('');
+      var sources = (tech.sources || []).map(function(s){ return '<span class="ctx-src">' + esc(s) + '</span>'; }).join('');
+      body = (techBullets ? '<ul class="ctx-bullets">' + techBullets + '</ul>' : '') +
+        (sources ? '<div class="ctx-sources">' + UI.contextBasis + sources + '</div>' : '');
+    } else if(ready){
+      var bullets = (ctx.bullets || []).map(function(b){ return '<li>' + esc(b) + '</li>'; }).join('');
+      body = '<p class="ctx-summary">' + esc(ctx.summary) + '</p>' +
+        (bullets ? '<ul class="ctx-bullets">' + bullets + '</ul>' : '');
+    } else {
+      var msg = state === 'failed' ? UI.llmFailedBody : (state === 'loading' ? UI.llmLoadingBody : UI.llmNoModelBody);
+      var err = (state === 'failed' && ctx.error) ? '<div class="gate-err">' + esc(ctx.error) + '</div>' : '';
+      var actions = state === 'loading' ? '' :
+        '<div class="ctx-cta-row">' +
+          '<button type="button" class="btn primary ctx-act" data-act="openSettings">' + esc(UI.btnConfigure) + '</button>' +
+          '<button type="button" class="btn ctx-act" data-act="retry">' + esc(UI.btnRetry) + '</button>' +
+        '</div>';
+      body = '<p class="ctx-summary">' + esc(msg) + '</p>' + err + actions;
+    }
     el.innerHTML = '<div class="ctx-head" id="ctx-head" role="button" tabindex="0" aria-expanded="' + (!ctxCollapsed) + '" title="' + esc(UI.ctxToggle) + '">' +
         '<svg class="ctx-caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
-        '<span class="ctx-title">' + UI.contextTitle + '</span>' + fid + '</div>' +
-      '<div class="ctx-body">' +
-        '<p class="ctx-summary">' + esc(ctx.summary) + '</p>' +
-        (bullets ? '<ul class="ctx-bullets">' + bullets + '</ul>' : '') +
-        (sources ? '<div class="ctx-sources">' + UI.contextBasis + sources + '</div>' : '') +
-      '</div>';
+        '<div class="ctx-tabs">' +
+          '<button type="button" class="ctx-tab' + (isTech ? '' : ' active') + '" data-page="business">' + esc(UI.contextTitle) + '</button>' +
+          '<button type="button" class="ctx-tab' + (isTech ? ' active' : '') + '" data-page="tech">' + esc(UI.techTitle) + '</button>' +
+        '</div>' + fid + '</div>' +
+      '<div class="ctx-body">' + body + '</div>';
+    el.onclick = function(ev){
+      var act = ev.target && ev.target.closest ? ev.target.closest('.ctx-act') : null;
+      if(act){
+        vscode.postMessage({ type: act.getAttribute('data-act') });
+        ev.stopPropagation();
+      }
+    };
     el.classList.toggle('collapsed', ctxCollapsed);
     var head = document.getElementById('ctx-head');
     if(head){
@@ -361,17 +445,35 @@ const JS = `
         el.classList.toggle('collapsed', ctxCollapsed);
         head.setAttribute('aria-expanded', String(!ctxCollapsed));
       };
-      head.addEventListener('click', toggle);
+      head.addEventListener('click', function(ev){
+        var tab = ev.target && ev.target.closest ? ev.target.closest('.ctx-tab') : null;
+        if(tab){
+          ctxPage = tab.getAttribute('data-page');
+          renderContext(ctx);
+          return;
+        }
+        toggle();
+      });
       head.addEventListener('keydown', function(ev){
-        if(ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); toggle(); }
+        var onTab = ev.target && ev.target.closest && ev.target.closest('.ctx-tab');
+        if(!onTab && (ev.key === 'Enter' || ev.key === ' ')){ ev.preventDefault(); toggle(); }
       });
     }
     el.style.display = 'block';
   }
 
   function renderBlocks(){
-    var blocks = payload ? payload.tiers[currentTier] : [];
     var el = document.getElementById('blocks');
+    // 业务背景 / L1 / L2 必须由模型生成：未就绪时整档阻断，不展示模板内容
+    if((currentTier === 'L1' || currentTier === 'L2') && semState() !== 'ready'){
+      el.innerHTML = gateHtml();
+      return;
+    }
+    var blocks = payload ? payload.tiers[currentTier] : [];
+    // L1/L2 在 ready 态下只展示模型产出的块，模型未覆盖的单元不拿模板顶替
+    if(currentTier === 'L1' || currentTier === 'L2'){
+      blocks = blocks.filter(function(b){ return b.fidelity === 'ai'; });
+    }
     if(!blocks.length){
       el.innerHTML = '<div class="empty">' +
         '<svg class="empty-art" viewBox="0 0 64 64" aria-hidden="true">' +
@@ -398,7 +500,7 @@ const JS = `
         body = '<p class="block-text' + mono + '">' + esc(b.content) + '</p>';
       }
       var order = (i + 1 < 10 ? '0' : '') + (i + 1);
-      html += '<div class="block" data-idx="' + b.unitIndex + '" style="--i:' + Math.min(i, 12) + '" role="button" tabindex="0">' +
+      html += '<div class="block" data-idx="' + i + '" data-units="' + ((b.focusUnits && b.focusUnits.length ? b.focusUnits : [b.unitIndex]).join(',')) + '" style="--i:' + Math.min(i, 12) + '" role="button" tabindex="0">' +
         '<div class="block-gutter"><span class="block-index">' + order + '</span></div>' +
         '<div class="block-main">' +
           '<div class="block-head"><span class="block-title">' + esc(b.title) + '</span>' + fid + '</div>' +
@@ -417,12 +519,19 @@ const JS = `
     for(var i=0;i<indexes.length;i++) active[indexes[i]] = true;
     var all = document.querySelectorAll('.block');
     for(var j=0;j<all.length;j++){
-      var idx = parseInt(all[j].getAttribute('data-idx'), 10);
-      if(active[idx]) all[j].classList.add('active'); else all[j].classList.remove('active');
+      var units = (all[j].getAttribute('data-units') || '').split(',').map(function(v){ return parseInt(v, 10); });
+      var hit = false;
+      for(var k=0;k<units.length;k++){ if(active[units[k]]){ hit = true; break; } }
+      if(hit) all[j].classList.add('active'); else all[j].classList.remove('active');
     }
     if(indexes.length){
-      var first = document.querySelector('.block[data-idx="' + indexes[0] + '"]');
-      if(first) first.scrollIntoView({behavior:'smooth', block:'center'});
+      var target = null;
+      for(var m=0;m<all.length;m++){
+        var u2 = (all[m].getAttribute('data-units') || '').split(',').map(function(v){ return parseInt(v, 10); });
+        for(var n=0;n<u2.length;n++){ if(u2[n] === indexes[0]){ target = all[m]; break; } }
+        if(target) break;
+      }
+      if(target) target.scrollIntoView({behavior:'smooth', block:'center'});
     }
   }
 
@@ -438,15 +547,15 @@ const JS = `
   function activateBlock(block, badge){
     var idx = parseInt(block.getAttribute('data-idx'), 10);
     var blocks = (payload && payload.tiers[currentTier]) || [];
-    for(var i=0;i<blocks.length;i++){
-      if(blocks[i].unitIndex !== idx) continue;
+    var b = blocks[idx];
+    if(b){
       var lineRange = badge
         ? { start: parseInt(badge.getAttribute('data-start'), 10), end: parseInt(badge.getAttribute('data-end'), 10) }
-        : (blocks[i].lines[0] || { start: 1, end: 1 });
+        : (b.lines[0] || { start: 1, end: 1 });
       pinnedIdx = idx;
       vscode.postMessage({
         type:'jump',
-        ranges: badge ? [lineRange] : blocks[i].lines,
+        ranges: badge ? [lineRange] : b.lines,
         line: lineRange.start
       });
       return;
@@ -454,6 +563,11 @@ const JS = `
   }
 
   document.getElementById('blocks').addEventListener('click', function(e){
+    var act = e.target.closest('.gate-act');
+    if(act){
+      vscode.postMessage({ type: act.getAttribute('data-act') });
+      return;
+    }
     var badge = e.target.closest('.line-badge');
     var block = e.target.closest('.block');
     if(!block) return;
@@ -474,9 +588,8 @@ const JS = `
     var idx = parseInt(block.getAttribute('data-idx'), 10);
     if(idx !== pinnedIdx) pinnedIdx = -1;
     var blocks = (payload && payload.tiers[currentTier]) || [];
-    for(var i=0;i<blocks.length;i++){
-      if(blocks[i].unitIndex === idx){ vscode.postMessage({ type:'focus', ranges: blocks[i].lines }); break; }
-    }
+    var b = blocks[idx];
+    if(b){ vscode.postMessage({ type:'focus', ranges: b.lines }); }
   });
 
   document.getElementById('blocks').addEventListener('mouseout', function(e){

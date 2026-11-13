@@ -1,11 +1,15 @@
 // 投影层：语义单元 → 四档投影块（L1-L4），并产出可序列化到 Webview 的载荷。
+// L1 按函数/接口聚合，L2 按代码块聚合；L3/L4 保持逐单元，行号全部来自 AST。
 
-import type { ContextSummary, Fidelity, LineRange, SemanticUnit, TierId } from '../model/types';
+import type { ContextSummary, ExplainGroups, Fidelity, LineRange, SemanticUnit, TierId } from '../model/types';
 import type { Lang } from '../i18n';
 import { generateUnit } from './vernacular';
+import { buildExplainGroups } from '../parser/groups';
 
 export interface Block {
   unitIndex: number;
+  /** 该块覆盖的语义单元下标（L1/L2 是分组内的全部单元） */
+  focusUnits: number[];
   title: string;
   lines: LineRange[];
   fidelity: Fidelity;
@@ -23,6 +27,8 @@ export interface ProjectionOptions {
   lang?: Lang;
   /** 符号名 → 「文件:行号 · 说明」，把跨文件调用锚定到定义处 */
   hints?: Record<string, string>;
+  /** 已算好的解释分组，避免重复推导 */
+  groups?: ExplainGroups;
 }
 
 const TIER_ORDER: TierId[] = ['L1', 'L2', 'L3', 'L4'];
@@ -46,17 +52,42 @@ export function buildProjection(
   source: string,
   options?: ProjectionOptions,
 ): ProjectionPayload {
+  const lang: Lang = options?.lang ?? 'zh';
   const sourceLines = source.split('\n');
+  const groups = options?.groups ?? buildExplainGroups(units, lang);
   const tiers: Record<TierId, Block[]> = { L1: [], L2: [], L3: [], L4: [] };
 
-  units.forEach((unit, unitIndex) => {
-    const desc = generateUnit(unit.facts, { lang: options?.lang, hints: options?.hints });
-    const base = { unitIndex, title: desc.title, lines: unit.lines };
+  // L1：一个函数 / 接口 / 类一条，内容只来自模型
+  for (const g of groups.l1) {
+    tiers.L1.push({
+      unitIndex: g.unitIndexes[0] ?? -1,
+      focusUnits: g.unitIndexes,
+      title: g.title,
+      lines: g.lines,
+      fidelity: 'inferred',
+      mode: 'text',
+      content: '',
+    });
+  }
 
-    // L1：意图（⚠ 语义推断；接入模型后改为 AI 归纳）
-    tiers.L1.push({ ...base, fidelity: 'inferred', mode: 'text', content: desc.l1 });
-    // L2：步骤（✓ 确定性）
-    tiers.L2.push({ ...base, fidelity: 'ok', mode: 'text', content: desc.l2 });
+  // L2：一个代码块一条，内容只来自模型
+  for (const g of groups.l2) {
+    tiers.L2.push({
+      unitIndex: g.unitIndexes[0] ?? -1,
+      focusUnits: g.unitIndexes,
+      title: g.title,
+      lines: g.lines,
+      fidelity: 'inferred',
+      mode: 'text',
+      content: '',
+    });
+  }
+
+  // L3 / L4：逐单元，确定性
+  units.forEach((unit, unitIndex) => {
+    const desc = generateUnit(unit.facts, { lang, hints: options?.hints });
+    const base = { unitIndex, focusUnits: [unitIndex], title: desc.title, lines: unit.lines };
+
     // L3：逻辑 / 结构（✓ 确定性，等宽展示）
     tiers.L3.push({ ...base, fidelity: 'ok', mode: 'text', content: desc.l3 });
     // L4：真实代码（✓ 确定性）
@@ -66,7 +97,10 @@ export function buildProjection(
   return { tiers };
 }
 
-/** 把 LLM 返回的 L1/L2 覆盖进投影（行号与单元边界仍然来自 AST） */
+/**
+ * 把 LLM 返回的 L1/L2 覆盖进投影。
+ * 下标是分组下标（与 payload.tiers.L1/L2 的数组位置一致）。
+ */
 export function applyLlmResult(
   payload: ProjectionPayload,
   result: { l1: Record<number, string>; l2: Record<number, string> },
@@ -76,13 +110,13 @@ export function applyLlmResult(
     ['L2', result.l2],
   ];
   for (const [tier, texts] of tiers) {
-    for (const block of payload.tiers[tier]) {
-      const text = texts[block.unitIndex];
+    payload.tiers[tier].forEach((block, i) => {
+      const text = texts[i];
       if (text) {
         block.content = text;
         block.fidelity = 'ai';
       }
-    }
+    });
   }
 }
 

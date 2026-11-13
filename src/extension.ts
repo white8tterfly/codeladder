@@ -11,7 +11,10 @@ import { HighlightManager } from './highlight/decorator';
 import { ExplainPanel } from './ui/panel';
 import { ProjectIndex } from './index/projectIndex';
 import { buildFileContext } from './context/contextBuilder';
-import { enrichWithLlm, hasLlmSource } from './llm/client';
+import { enrichWithLlm } from './llm/client';
+import type { LlmOutcome } from './llm/client';
+import { AnalysisCache, groupTextKey, planAnalysis } from './llm/analysisCache';
+import { buildExplainGroups } from './parser/groups';
 import { getLang, uiText } from './i18n';
 
 let panel: ExplainPanel | undefined;
@@ -20,6 +23,8 @@ let currentUnits: SemanticUnit[] = [];
 let currentDocUri: vscode.Uri | undefined;
 let explainToken = 0;
 const projectIndex = new ProjectIndex();
+/** 语义层结果缓存：未改动的单元不重复送给模型 */
+const analysisCache = new AnalysisCache();
 
 export function activate(context: vscode.ExtensionContext): void {
   panel = new ExplainPanel(context.extensionUri);
@@ -58,6 +63,14 @@ export function activate(context: vscode.ExtensionContext): void {
         highlight.pin(editor, msg.ranges ?? []);
         break;
       }
+      case 'openSettings': {
+        await openLlmSettings();
+        break;
+      }
+      case 'retry': {
+        await runExplain(visibleTargetEditor());
+        break;
+      }
       default:
         break;
     }
@@ -74,8 +87,12 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       vscode.window.showInformationMessage(ui.msgIndexed(projectIndex.size));
     }),
+    // 模型配置变化时清空语义层缓存，避免把旧模型结果当成新模型输出
     // 语言切换：面板已打开时立即用新语言重新生成
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('codeLadder.llm')) {
+        analysisCache.clear();
+      }
       if (!e.affectsConfiguration('codeLadder.language')) {
         return;
       }
@@ -165,38 +182,143 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
     // 先通读工程、建立上下文，再生成解释
     await ensureProjectIndex(ui.progressIndexing);
     const ctx = buildFileContext(projectIndex, editor.document, parsed.source, lang);
-    const payload = buildProjection(currentUnits, parsed.source, { lang, hints: ctx.hints });
-    payload.context = ctx.summary;
+    const groups = buildExplainGroups(currentUnits, lang);
+    const payload = buildProjection(currentUnits, parsed.source, { lang, hints: ctx.hints, groups });
+    // 技术背景是确定性事实，先上屏；业务背景与 L1/L2 等模型归纳
+    payload.context = {
+      summary: '',
+      bullets: [],
+      sources: ctx.tech.sources,
+      fidelity: 'ok',
+      state: 'loading',
+      tech: ctx.tech,
+    };
     panel?.render(payload, ui);
 
     // 初始聚焦当前光标所在行对应的语义单元
     const line = editor.selection.active.line + 1;
     panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
 
-    // 有归纳来源（IDE 内置模型或自配端点）时，再用工程上下文做一次语义归纳；失败则保留确定性结果
-    if (await hasLlmSource()) {
-      const status = vscode.window.setStatusBarMessage(ui.statusLlm);
-      try {
-        const result = await enrichWithLlm(parsed.source, currentUnits, ctx, lang);
-        if (!result || token !== explainToken) {
-          return;
+    // ---- 语义层（业务背景 / L1 / L2）：先查缓存，只对变化的分组调用模型 ----
+    const sourceLines = parsed.source.split('\n');
+    const l1Keys = groups.l1.map((g) => groupTextKey(sourceLines, g));
+    const l2Keys = groups.l2.map((g) => groupTextKey(sourceLines, g));
+    const cacheKey = `${editor.document.uri.toString()}|${lang}`;
+    const cached = analysisCache.get(cacheKey);
+    const { reusedL1, reusedL2, targetsL1, targetsL2, summaryKey, needSummary } = planAnalysis(cached, l1Keys, l2Keys, ctx, currentUnits);
+    const totalGroups = groups.l1.length + groups.l2.length;
+    const changedGroups = targetsL1.length + targetsL2.length;
+
+    // 文件内容与摘要指纹都没变：直接复用，不产生任何模型调用
+    if (cached && changedGroups === 0 && !needSummary) {
+      const l1: Record<number, string> = {};
+      const l2: Record<number, string> = {};
+      l1Keys.forEach((key, i) => {
+        const text = reusedL1.get(key);
+        if (text) {
+          l1[i] = text;
         }
-        applyLlmResult(payload, result);
-        payload.context = {
-          ...ctx.summary,
-          summary: result.summary ?? ctx.summary.summary,
-          bullets: result.bullets && result.bullets.length > 0 ? result.bullets : ctx.summary.bullets,
-          fidelity: 'ai',
-        };
-        panel?.render(payload, ui);
-        panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
-      } finally {
-        status.dispose();
+      });
+      l2Keys.forEach((key, i) => {
+        const text = reusedL2.get(key);
+        if (text) {
+          l2[i] = text;
+        }
+      });
+      applyLlmResult(payload, { l1, l2 });
+      payload.context = {
+        summary: cached.summary,
+        bullets: cached.bullets,
+        sources: ctx.tech.sources,
+        fidelity: 'ai',
+        state: 'ready',
+        tech: ctx.tech,
+      };
+      panel?.render(payload, ui);
+      panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
+      vscode.window.setStatusBarMessage(ui.statusLlmCached, 4000);
+      return;
+    }
+
+    const statusText = changedGroups > 0 && changedGroups < totalGroups
+      ? ui.statusLlmIncremental(changedGroups, totalGroups)
+      : ui.statusLlm;
+    const status = vscode.window.setStatusBarMessage(statusText);
+    let outcome: LlmOutcome;
+    try {
+      outcome = await enrichWithLlm(parsed.source, groups, ctx, lang, { l1Targets: targetsL1, l2Targets: targetsL2, needSummary });
+    } finally {
+      status.dispose();
+    }
+    if (token !== explainToken) {
+      return;
+    }
+    if (!outcome.ok) {
+      payload.context = {
+        ...payload.context,
+        state: outcome.reason === 'no-model' ? 'no-model' : 'failed',
+        error: outcome.detail,
+      };
+      panel?.render(payload, ui);
+      panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
+      const text = outcome.reason === 'no-model' ? ui.msgNoModel : ui.msgLlmFailed(outcome.detail ?? '');
+      const action = await vscode.window.showWarningMessage(text, ui.btnConfigure, ui.btnRetry);
+      if (action === ui.btnConfigure) {
+        await openLlmSettings();
+      } else if (action === ui.btnRetry) {
+        await runExplain(editor);
       }
+      return;
+    }
+
+    // 合并本次结果与未变化分组的缓存，只有模型产出过的文本才会进入面板
+    const mergedL1: Record<number, string> = {};
+    const mergedL2: Record<number, string> = {};
+    const cachedL1 = new Map<string, string>();
+    const cachedL2 = new Map<string, string>();
+    l1Keys.forEach((key, i) => {
+      const text = outcome.l1[i] ?? reusedL1.get(key);
+      if (text) {
+        mergedL1[i] = text;
+        cachedL1.set(key, text);
+      }
+    });
+    l2Keys.forEach((key, i) => {
+      const text = outcome.l2[i] ?? reusedL2.get(key);
+      if (text) {
+        mergedL2[i] = text;
+        cachedL2.set(key, text);
+      }
+    });
+    const summary = needSummary ? outcome.summary : (cached?.summary ?? outcome.summary);
+    const bullets = needSummary ? outcome.bullets : (cached?.bullets ?? outcome.bullets);
+
+    applyLlmResult(payload, { l1: mergedL1, l2: mergedL2 });
+    analysisCache.set(cacheKey, { summary, bullets, summaryKey, l1: cachedL1, l2: cachedL2 });
+    payload.context = {
+      summary,
+      bullets,
+      sources: ctx.tech.sources,
+      fidelity: 'ai',
+      state: 'ready',
+      tech: ctx.tech,
+    };
+    panel?.render(payload, ui);
+    panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
+
+    // 超出字符预算的分组没有送给模型；下次运行会自动只补这些分组
+    const covered = Object.keys(outcome.l1).length + Object.keys(outcome.l2).length;
+    if (changedGroups > 0 && covered < changedGroups) {
+      vscode.window.setStatusBarMessage(ui.statusLlmPartial(covered, changedGroups), 8000);
     }
   } catch (err) {
     vscode.window.showErrorMessage(`${ui.errPrefix}${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/** 打开 CodeLadder 的模型设置页 */
+async function openLlmSettings(): Promise<void> {
+  await vscode.commands.executeCommand('workbench.action.openSettings', 'codeLadder.llm');
 }
 
 /** 首次运行时建立工程索引；已建立则直接复用 */

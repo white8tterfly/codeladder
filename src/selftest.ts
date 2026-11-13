@@ -44,11 +44,42 @@ async function main(): Promise<void> {
   for (const t of tiers) {
     console.log(`\n--- ${t} ${tierNames[t]} ---`);
     payload.tiers[t].forEach((b) => {
-      const fid = b.fidelity === 'ai' ? 'AI' : b.fidelity === 'inferred' ? 'INF' : 'OK';
-      const lr = b.lines.map((r) => (r.start === r.end ? `L${r.start}` : `L${r.start}-${r.end}`)).join(',');
-      const content = b.content.replace(/\n/g, ' / ');
+      const fid = b.fidelity === 'ai' ? 'AI' : b.fidelity === 'inferred' ? 'WAIT' : 'OK';
+      const lr = b.lines.map((r) => (r.start === r.end ? `L${r.start}` : `L${r.start}-L${r.end}`)).join(',');
+      const content = b.content ? b.content.replace(/\n/g, ' / ') : '（由模型生成）';
       console.log(`  [${fid}][${lr}] ${b.title}: ${content}`);
     });
+  }
+
+  // 覆盖检查：L1 / L2 必须覆盖全部代码行，否则就是"缺头少尾"
+  const uncovered = (tier: 'L1' | 'L2'): number[] => {
+    const covered = new Set<number>();
+    for (const b of payload.tiers[tier]) {
+      for (const r of b.lines) {
+        for (let n = r.start; n <= r.end; n++) {
+          covered.add(n);
+        }
+      }
+    }
+    const missing = new Set<number>();
+    for (const u of units) {
+      for (const r of u.lines) {
+        for (let n = r.start; n <= r.end; n++) {
+          if (!covered.has(n)) {
+            missing.add(n);
+          }
+        }
+      }
+    }
+    return [...missing].sort((a, b) => a - b);
+  };
+
+  console.log('='.repeat(70));
+  for (const t of ['L1', 'L2'] as const) {
+    const miss = uncovered(t);
+    console.log(miss.length === 0
+      ? `${t} 覆盖检查: 全部代码行已覆盖`
+      : `${t} 覆盖检查: 仍有 ${miss.length} 行未覆盖 -> ${miss.join(',')}`);
   }
 
   parsed.tree.delete();

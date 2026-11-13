@@ -375,18 +375,34 @@ export function collectDeclarations(root: SN, lang: LanguageId): DeclaredSymbol[
 
 // ---------- 语义单元 ----------
 
+/** 遍历上下文：记录当前所属的函数/类与代码块，供 L1/L2 聚合 */
+interface WalkCtx {
+  l1?: string;
+  block: string;
+}
+
+const MODULE: WalkCtx = { block: 'module' };
+
 export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
   const p = syntaxProfile(lang);
   const units: SemanticUnit[] = [];
   let counter = 0;
   const nextId = (): string => `u${counter++}`;
 
-  const emit = (kind: UnitKind, facts: Omit<UnitFacts, 'kind'>, node: SN, endNode?: SN, leadLine?: number): void => {
+  const emit = (kind: UnitKind, facts: Omit<UnitFacts, 'kind'>, node: SN, endNode?: SN, leadLine?: number, ctx: WalkCtx = MODULE): SemanticUnit => {
     const lines: LineRange[] = [{
       start: leadLine !== undefined ? Math.min(nodeStartLine(node), leadLine) : nodeStartLine(node),
       end: nodeEndLine(endNode ?? node),
     }];
-    units.push({ id: nextId(), lines, facts: { ...facts, kind } });
+    const unit: SemanticUnit = {
+      id: nextId(),
+      lines,
+      facts: { ...facts, kind },
+      containerId: ctx.l1,
+      blockId: ctx.block,
+    };
+    units.push(unit);
+    return unit;
   };
 
   const isComment = (node: SN): boolean => p.commentTypes.includes(node.type);
@@ -414,10 +430,12 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
       { nodeType: 'docstring', comment: firstLine || undefined, signature: firstLine ? firstLine.slice(0, 120) : '/* … */' },
       header[0],
       header[header.length - 1],
+      undefined,
+      MODULE,
     );
   }
 
-  const walk = (children: SN[], insideClass: boolean): void => {
+  const walk = (children: SN[], insideClass: boolean, ctx: WalkCtx): void => {
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
       if (isComment(child)) {
@@ -438,18 +456,18 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
       if (!commentText && next && isComment(next) && nodeStartLine(next) === nodeEndLine(child)) {
         commentText = p.strip(next.text);
       }
-      emitNode(child, insideClass, leadLine, commentText);
+      emitNode(child, insideClass, ctx, leadLine, commentText);
     }
   };
 
-  const walkBody = (node: SN, insideClass: boolean): void => {
+  const walkBody = (node: SN, insideClass: boolean, ctx: WalkCtx): void => {
     const body = bodyNodeOf(node);
     if (body) {
-      walk(body.namedChildren, insideClass);
+      walk(body.namedChildren, insideClass, ctx);
     }
   };
 
-  const emitNode = (node: SN, insideClass: boolean, leadLine?: number, commentText?: string, outer?: SN): void => {
+  const emitNode = (node: SN, insideClass: boolean, ctx: WalkCtx, leadLine?: number, commentText?: string, outer?: SN): void => {
     const t = node.type;
     if (p.commentTypes.includes(t)) {
       return;
@@ -458,19 +476,19 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
       return;
     }
     if (p.walkOnlyNodes.includes(t)) {
-      walkBody(node, true);
+      walkBody(node, true, ctx);
       return;
     }
     if (p.unwrapNodes.includes(t)) {
       const inner = node.childForFieldName('declaration')
         ?? node.namedChildren.find((c) => !isComment(c) && !p.skipNodes.includes(c.type));
       if (inner) {
-        emitNode(inner, insideClass, leadLine, commentText, outer ?? node);
+        emitNode(inner, insideClass, ctx, leadLine, commentText, outer ?? node);
         return;
       }
     }
     if (p.scopeNodes.includes(t)) {
-      walkBody(node, insideClass);
+      walkBody(node, insideClass, ctx);
       return;
     }
 
@@ -480,16 +498,18 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
       const name = nameOfNode(node);
       const header = headerText(node);
       const base = classBaseOf(header);
-      emit('class', withComment({ nodeType: t, name, base: base || undefined, signature: header }, commentText), lineStartNode, node, leadLine);
-      walkBody(node, true);
+      const unit = emit('class', withComment({ nodeType: t, name, base: base || undefined, signature: header }, commentText), lineStartNode, node, leadLine, ctx);
+      unit.blockId = unit.id;
+      walkBody(node, true, { l1: unit.id, block: unit.id });
       return;
     }
 
     if (p.functionNodes.includes(t) || p.methodNodes.includes(t)) {
       const name = nameOfNode(node);
       const header = headerText(node);
-      emit('function', withComment({ nodeType: t, name, signature: header }, commentText), lineStartNode, node, leadLine);
-      walkBody(node, false);
+      const unit = emit('function', withComment({ nodeType: t, name, signature: header }, commentText), lineStartNode, node, leadLine, ctx);
+      unit.blockId = unit.id;
+      walkBody(node, false, { l1: unit.id, block: unit.id });
       return;
     }
 
@@ -501,27 +521,30 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
         name,
         value: typeNode ? oneLine(typeNode).replace(/^:\s*/, '') : '',
         signature: headerText(node),
-      }, commentText), lineStartNode, node, leadLine);
+      }, commentText), lineStartNode, node, leadLine, ctx);
       return;
     }
 
     if (p.variableNodes.includes(t)) {
-      emitVariables(node, t, leadLine, commentText);
+      emitVariables(node, t, ctx, leadLine, commentText);
       return;
     }
 
     if (p.ifNodes.includes(t)) {
       const condition = conditionOf(node, t);
-      emit('if', withComment({ nodeType: t, condition, signature: headerText(node) }, commentText), lineStartNode, node, leadLine);
-      walkBody(node, false);
+      const unit = emit('if', withComment({ nodeType: t, condition, signature: headerText(node) }, commentText), lineStartNode, node, leadLine, ctx);
+      unit.blockId = unit.id;
+      const inner: WalkCtx = { l1: ctx.l1, block: unit.id };
+      walkBody(node, false, inner);
       const alt = node.childForFieldName('alternative')
         ?? node.namedChildren.find((c) => c.type === 'else_clause');
       if (alt) {
+        const altCtx: WalkCtx = { l1: ctx.l1, block: `${unit.id}:alt` };
         const altBody = bodyNodeOf(alt);
         if (altBody) {
-          walk(altBody.namedChildren, false);
+          walk(altBody.namedChildren, false, altCtx);
         } else {
-          walk(alt.namedChildren, false);
+          walk(alt.namedChildren, false, altCtx);
         }
       }
       return;
@@ -529,21 +552,22 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
 
     if (p.loopNodes.includes(t)) {
       const condition = conditionOf(node, t);
-      emit('for', withComment({ nodeType: t, condition, signature: headerText(node) }, commentText), lineStartNode, node, leadLine);
-      walkBody(node, false);
+      const unit = emit('for', withComment({ nodeType: t, condition, signature: headerText(node) }, commentText), lineStartNode, node, leadLine, ctx);
+      unit.blockId = unit.id;
+      walkBody(node, false, { l1: ctx.l1, block: unit.id });
       return;
     }
 
     if (p.returnNodes.includes(t)) {
       const returns = oneLine(node).replace(/^return\b\s*/, '').replace(/;$/, '');
-      emit('return', withComment({ nodeType: t, returns, signature: oneLine(node) }, commentText), lineStartNode, node, leadLine);
+      emit('return', withComment({ nodeType: t, returns, signature: oneLine(node) }, commentText), lineStartNode, node, leadLine, ctx);
       return;
     }
 
     if (p.importNodes.includes(t) || p.importFromNodes.includes(t)) {
       const kind: UnitKind = p.importNodes.includes(t) ? 'import' : 'import_from';
       const name = importNameOf(node, t);
-      emit(kind, withComment({ nodeType: t, name, base: name, signature: oneLine(node) }, commentText), lineStartNode, node, leadLine);
+      emit(kind, withComment({ nodeType: t, name, base: name, signature: oneLine(node) }, commentText), lineStartNode, node, leadLine, ctx);
       return;
     }
 
@@ -555,14 +579,14 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
           name: callNameOf(inner),
           callExpr: oneLine(node),
           signature: oneLine(node),
-        }, commentText), node, node, leadLine);
+        }, commentText), node, node, leadLine, ctx);
         return;
       }
       if (inner && p.assignmentNodes.includes(inner.type)) {
-        emitAssignment(inner, node, leadLine, commentText);
+        emitAssignment(inner, node, ctx, leadLine, commentText);
         return;
       }
-      emit('statement', withComment({ nodeType: t, signature: oneLine(node) }, commentText), node, node, leadLine);
+      emit('statement', withComment({ nodeType: t, signature: oneLine(node) }, commentText), node, node, leadLine, ctx);
       return;
     }
 
@@ -572,14 +596,14 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
         name: callNameOf(node),
         callExpr: oneLine(node),
         signature: oneLine(node),
-      }, commentText), node, node, leadLine);
+      }, commentText), node, node, leadLine, ctx);
       return;
     }
 
-    emit('statement', withComment({ nodeType: t, signature: oneLine(node) }, commentText), node, node, leadLine);
+    emit('statement', withComment({ nodeType: t, signature: oneLine(node) }, commentText), node, node, leadLine, ctx);
   };
 
-  const emitAssignment = (assign: SN, stmtNode: SN, leadLine?: number, commentText?: string): void => {
+  const emitAssignment = (assign: SN, stmtNode: SN, ctx: WalkCtx, leadLine?: number, commentText?: string): void => {
     const left = assign.childForFieldName('left') ?? assign.childForFieldName('pattern');
     const right = assign.childForFieldName('right') ?? assign.childForFieldName('value');
     emit('assignment', withComment({
@@ -587,16 +611,16 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
       target: left ? oneLine(left) : '',
       value: right ? oneLine(right) : '',
       signature: oneLine(stmtNode),
-    }, commentText), stmtNode, stmtNode, leadLine);
+    }, commentText), stmtNode, stmtNode, leadLine, ctx);
   };
 
-  const emitVariables = (node: SN, t: string, leadLine?: number, commentText?: string): void => {
+  const emitVariables = (node: SN, t: string, ctx: WalkCtx, leadLine?: number, commentText?: string): void => {
     // 变量声明保留整行（含初始化表达式），不要被首个 '{' 截断
     const signature = oneLine(node).replace(/;$/, '');
     if (t === 'lexical_declaration' || t === 'variable_declaration') {
       const declarators = node.namedChildren.filter((c) => c.type === 'variable_declarator');
       if (declarators.length === 0) {
-        emit('statement', withComment({ nodeType: t, signature }, commentText), node, node, leadLine);
+        emit('statement', withComment({ nodeType: t, signature }, commentText), node, node, leadLine, ctx);
         return;
       }
       for (const d of declarators) {
@@ -606,7 +630,7 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
           target: oneLine(d.childForFieldName('name')),
           value: value ? oneLine(value) : '',
           signature,
-        }, commentText), node, node, leadLine);
+        }, commentText), node, node, leadLine, ctx);
       }
       return;
     }
@@ -617,7 +641,7 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
         target: oneLine(node.childForFieldName('pattern')).replace(/^mut\s+/, ''),
         value: value ? oneLine(value) : '',
         signature,
-      }, commentText), node, node, leadLine);
+      }, commentText), node, node, leadLine, ctx);
       return;
     }
     if (t === 'short_var_declaration') {
@@ -626,7 +650,7 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
         target: oneLine(node.childForFieldName('left')),
         value: oneLine(node.childForFieldName('right')),
         signature,
-      }, commentText), node, node, leadLine);
+      }, commentText), node, node, leadLine, ctx);
       return;
     }
     if (t === 'var_declaration' || t === 'const_declaration') {
@@ -640,7 +664,7 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
           target: name ? oneLine(name) : nameOfNode(spec),
           value: value ? oneLine(value) : '',
           signature: headerText(spec) || signature,
-        }, commentText), node, node, leadLine);
+        }, commentText), node, node, leadLine, ctx);
         return;
       }
     }
@@ -651,12 +675,12 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
       target: parsed.target,
       value: parsed.value,
       signature,
-    }, commentText), node, node, leadLine);
+    }, commentText), node, node, leadLine, ctx);
   };
 
   for (const child of root.namedChildren.slice(start)) {
     if (!isComment(child)) {
-      emitNode(child, false);
+      emitNode(child, false, MODULE);
     }
   }
 

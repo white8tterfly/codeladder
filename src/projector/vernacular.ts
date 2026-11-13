@@ -3,7 +3,8 @@
 // 架构定位（对应 PRD 3.2）：
 // - L3 的结构（控制流/签名）完全来自 AST 事实，100% 确定性；
 // - L2 由 AST 结构 + 命名推导，是确定性的白话化；
-// - L1 是意图归纳：优先复用代码内注释，否则用模板兜底，标记为「⚠ AI 生成」。
+// - L1 是意图归纳：只用模板说白话，不出现缩写与术语，标记为「⚠ 推断」。
+//   代码注释只作为参考（例如交给模型改写时），不直接照抄进 L1。
 //
 // 语言由调用方传入（Lang），模板本身不读配置，保证纯函数、可测试。
 
@@ -26,103 +27,126 @@ function pick(lang: Lang, zh: string, en: string): string {
   return lang === 'zh' ? zh : en;
 }
 
+/** 截断过长文本，避免白话层出现大段代码 */
+function short(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+/** 只取表达式的「主体名」：a.b(...) → a.b；字面量或复杂表达式返回空 */
+function simpleRef(expr: string | undefined): string {
+  if (!expr) {
+    return '';
+  }
+  const m = /^([A-Za-z_][\w.]*)\s*(\(|$)/.exec(expr.trim());
+  return m ? m[1] : '';
+}
+
 const intentTemplate: Record<UnitKind, (f: UnitFacts, l: Lang) => string> = {
   docstring: (_f, l) => pick(
     l,
-    '开头是这份文件的"说明书"，讲清楚它是干嘛的、怎么运行。',
-    'This opening note explains what the file is for and how to run it.',
+    '文件开头的说明，讲它是做什么的。',
+    'An opening note saying what the file does.',
   ),
   import: (f, l) => pick(
     l,
-    `引入一个叫 ${f.name || '??'} 的工具包，后面要借用它。`,
-    `Brings in the ${f.name || '??'} package for later use.`,
+    `拿来一个叫 ${f.name || '??'} 的工具，后面要用。`,
+    `Brings in a tool called ${f.name || '??'} for later use.`,
   ),
   import_from: (f, l) => pick(
     l,
-    `从 ${f.base || '??'} 里引入几个需要用到的工具。`,
-    `Imports a few helpers from ${f.base || '??'}.`,
+    `从 ${f.base || '??'} 里拿几样要用的工具。`,
+    `Takes a few helpers from ${f.base || '??'}.`,
   ),
   class: (f, l) => pick(
     l,
-    `声明一个叫 ${f.name || '??'} 的结构（"资料袋"），规定里面放哪些字段。`,
-    `Declares a structure called ${f.name || '??'} and the fields it holds.`,
+    `定义一个叫 ${f.name || '??'} 的资料袋，里面装几样信息。`,
+    `Defines a container called ${f.name || '??'} that holds a few pieces of information.`,
   ),
   field: (f, l) => pick(
     l,
-    `结构里的一个格子：${f.name || '??'}。`,
-    `One field inside the structure: ${f.name || '??'}.`,
+    `资料袋里的一格：${f.name || '??'}。`,
+    `One slot in the container: ${f.name || '??'}.`,
   ),
   function: (f, l) => pick(
     l,
-    `定义一步"工序"：${f.name || '??'}。`,
-    `Defines a reusable step: ${f.name || '??'}.`,
+    `定义一步操作：${f.name || '??'}。`,
+    `Defines one step: ${f.name || '??'}.`,
   ),
   assignment: (f, l) => pick(
     l,
-    `把某个结果算出来，存进 ${f.target || '一个变量'}。`,
-    `Computes a result and stores it in ${f.target || 'a variable'}.`,
+    `把算出来的结果存进 ${f.target || '一个地方'}。`,
+    `Stores the computed result in ${f.target || 'a place'}.`,
   ),
-  if: (f, l) => pick(
-    l,
-    `判断「${f.condition || '条件'}」，成立才执行下面这段。`,
-    `Checks "${f.condition || 'a condition'}" and runs the block below only when true.`,
-  ),
-  for: (f, l) => pick(
-    l,
-    `依次处理「${f.condition || '集合'}」里的每一项。`,
-    `Handles each item of "${f.condition || 'a collection'}" one by one.`,
-  ),
-  return: (f, l) => pick(
-    l,
-    f.returns ? `把 ${f.returns} 作为结果返回。` : '把结果交出来。',
-    f.returns ? `Returns ${f.returns} as the result.` : 'Returns the result.',
-  ),
+  if: (f, l) => {
+    const cond = simpleRef(f.condition);
+    return pick(
+      l,
+      cond ? `看看「${cond}」成不成立，成立才做下面的事。` : '看看条件成不成立，成立才做下面的事。',
+      cond ? `Checks "${cond}"; the block below runs only if it holds.` : 'Checks a condition; the block below runs only if it holds.',
+    );
+  },
+  for: (f, l) => {
+    const list = simpleRef(f.condition);
+    return pick(
+      l,
+      list ? `把「${list}」里的东西一件一件处理。` : '把清单里的东西一件一件处理。',
+      list ? `Handles each item of "${list}" one by one.` : 'Handles each item of a list one by one.',
+    );
+  },
+  return: (f, l) => {
+    const ref = simpleRef(f.returns);
+    return pick(
+      l,
+      ref ? `把 ${ref} 交出去。` : '把结果交出去。',
+      ref ? `Hands back ${ref}.` : 'Hands back the result.',
+    );
+  },
   call: (f, l) => describeCall(f, l).l1,
-  comment: (_f, l) => pick(l, '一段说明文字。', 'A note for human readers.'),
-  statement: (_f, l) => pick(l, '执行一段代码。', 'Runs a statement.'),
+  comment: (_f, l) => pick(l, '一段写给人看的说明。', 'A note written for people.'),
+  statement: (_f, l) => pick(l, '做一步操作。', 'Does one step.'),
 };
 
 const stepTemplate: Record<UnitKind, (f: UnitFacts, l: Lang) => string> = {
-  docstring: (_f, l) => pick(l, '模块说明：说明文件用途与运行方式。', 'Module docstring: purpose and how to run.'),
-  import: (f, l) => pick(l, `导入 ${f.name || '??'} 模块。`, `Imports the ${f.name || '??'} module.`),
-  import_from: (f, l) => pick(l, `从 ${f.base || '??'} 导入所需名称。`, `Imports names from ${f.base || '??'}.`),
+  docstring: (_f, l) => pick(l, '文件说明：用途与运行方式。', 'File note: purpose and how to run.'),
+  import: (f, l) => pick(l, `把 ${f.name || '??'} 拿进来用。`, `Takes in ${f.name || '??'}.`),
+  import_from: (f, l) => pick(l, `从 ${f.base || '??'} 里拿要用的名字。`, `Takes the needed names from ${f.base || '??'}.`),
   class: (f, l) => pick(
     l,
-    `定义类 ${f.name || '??'}${f.base ? `（继承 ${f.base}）` : ''}。`,
-    `Defines class ${f.name || '??'}${f.base ? ` (extends ${f.base})` : ''}.`,
+    `定义 ${f.name || '??'}${f.base ? `，沿用 ${f.base}` : ''}。`,
+    `Defines ${f.name || '??'}${f.base ? `, reusing ${f.base}` : ''}.`,
   ),
   field: (f, l) => pick(
     l,
-    `定义字段 ${f.name || '??'}，类型 ${f.value || '??'}。`,
-    `Declares field ${f.name || '??'} of type ${f.value || '??'}.`,
+    `定义 ${f.name || '??'}，存 ${short(f.value || '??', 40)}。`,
+    `Defines ${f.name || '??'} holding ${short(f.value || '??', 40)}.`,
   ),
-  function: (f, l) => pick(l, `定义函数 ${f.name || '??'}。`, `Defines function ${f.name || '??'}.`),
+  function: (f, l) => pick(l, `定义 ${f.name || '??'}。`, `Defines ${f.name || '??'}.`),
   assignment: (f, l) => pick(
     l,
-    `给变量 ${f.target || '??'} 赋值${f.value ? `为 ${f.value}` : ''}。`,
-    `Assigns ${f.value || 'a value'} to ${f.target || 'a variable'}.`,
+    f.value ? `把 ${short(f.value, 50)} 存进 ${f.target || '??'}。` : `把结果存进 ${f.target || '??'}。`,
+    f.value ? `Stores ${short(f.value, 50)} in ${f.target || '??'}.` : `Stores the result in ${f.target || '??'}.`,
   ),
   if: (f, l) => pick(
     l,
-    `判断「${f.condition || '条件'}」，进入对应分支。`,
-    `Checks "${f.condition || 'a condition'}" and takes the matching branch.`,
+    `看「${short(f.condition || '条件', 50)}」，走对应的一边。`,
+    `Checks "${short(f.condition || 'a condition', 50)}" and takes the matching side.`,
   ),
   for: (f, l) => pick(
     l,
-    `遍历「${f.condition || '集合'}」，逐项处理。`,
-    `Iterates over "${f.condition || 'a collection'}" and processes each item.`,
+    `把「${short(f.condition || '一堆东西', 50)}」逐项过一遍。`,
+    `Goes through "${short(f.condition || 'a collection', 50)}" item by item.`,
   ),
   return: (f, l) => pick(
     l,
-    `返回${f.returns ? `「${f.returns}」` : '结果'}。`,
-    `Returns ${f.returns ? `"${f.returns}"` : 'a result'}.`,
+    f.returns ? `交出「${short(f.returns, 50)}」。` : '交出结果。',
+    f.returns ? `Hands back "${short(f.returns, 50)}".` : 'Hands back the result.',
   ),
   call: (f, l) => describeCall(f, l).l2,
-  comment: (f, l) => f.comment || pick(l, '注释说明。', 'A comment.'),
+  comment: (f, l) => f.comment || pick(l, '注释。', 'A comment.'),
   statement: (f, l) => pick(
     l,
-    `执行语句${f.signature ? `：${f.signature}` : ''}。`,
-    `Runs a statement${f.signature ? `: ${f.signature}` : ''}.`,
+    `执行${f.signature ? `：${short(f.signature, 60)}` : '一步'}。`,
+    `Runs ${f.signature ? `: ${short(f.signature, 60)}` : 'one step'}.`,
   ),
 };
 
@@ -211,8 +235,8 @@ function describePrint(args: string[], l: Lang): CallDescription {
   if (args.length === 0) {
     return {
       title: pick(l, '打印空行', 'Print a blank line'),
-      l1: pick(l, '在终端输出一个空行。', 'Prints an empty line to the terminal.'),
-      l2: pick(l, '输出空行。', 'Outputs an empty line.'),
+      l1: pick(l, '在屏幕上留一个空行。', 'Leaves a blank line on the screen.'),
+      l2: pick(l, '输出空行。', 'Outputs a blank line.'),
     };
   }
   if (args.length > 1) {
@@ -221,10 +245,10 @@ function describePrint(args: string[], l: Lang): CallDescription {
       title: pick(l, '打印多项内容', 'Print several values'),
       l1: pick(
         l,
-        `在终端把 ${args.length} 项内容连起来打印：${list}。`,
-        `Prints ${args.length} values joined together: ${list}.`,
+        `在屏幕上打印 ${args.length} 样东西：${short(list, 40)}。`,
+        `Prints ${args.length} things on the screen: ${short(list, 40)}.`,
       ),
-      l2: pick(l, `输出 ${args.join(', ')}。`, `Outputs ${args.join(', ')}.`),
+      l2: pick(l, `输出 ${short(args.join(', '), 60)}。`, `Outputs ${short(args.join(', '), 60)}.`),
     };
   }
   const arg = args[0];
@@ -237,15 +261,15 @@ function describePrint(args: string[], l: Lang): CallDescription {
         title: pick(l, '打印拼装文本', 'Print a formatted string'),
         l1: pick(
           l,
-          `在终端打印一段把变量拼进去的文字：${trimmed}。`,
-          `Prints a string with variables interpolated: ${trimmed}.`,
+          '在屏幕上打印一句把值拼进去的话。',
+          'Prints a sentence with values filled in.',
         ),
-        l2: pick(l, `输出拼装文本 ${trimmed}。`, `Outputs the formatted string ${trimmed}.`),
+        l2: pick(l, `输出拼装文本 ${short(trimmed, 60)}。`, `Outputs the formatted string ${short(trimmed, 60)}.`),
       };
     }
     return {
       title: pick(l, '打印提示文字', 'Print a message'),
-      l1: pick(l, `在终端打印一句提示：「${literal}」。`, `Prints a message to the terminal: "${literal}".`),
+      l1: pick(l, `在屏幕上打一句提示：「${literal}」。`, `Prints a message on the screen: "${literal}".`),
       l2: pick(l, `输出提示「${literal}」。`, `Outputs the message "${literal}".`),
     };
   }
@@ -255,8 +279,8 @@ function describePrint(args: string[], l: Lang): CallDescription {
       title: pick(l, '打印分隔线', 'Print a divider'),
       l1: pick(
         l,
-        `在终端打印一条分隔线：把「${repeated[2]}」重复 ${repeated[3]} 次。`,
-        `Prints a divider made of "${repeated[2]}" repeated ${repeated[3]} times.`,
+        `在屏幕上打一条分隔线：把「${repeated[2]}」重复 ${repeated[3]} 次。`,
+        `Prints a divider: "${repeated[2]}" repeated ${repeated[3]} times.`,
       ),
       l2: pick(
         l,
@@ -270,16 +294,16 @@ function describePrint(args: string[], l: Lang): CallDescription {
       title: pick(l, '打印运行结果', 'Print a result'),
       l1: pick(
         l,
-        `先把 ${trimmed} 跑一遍，再把它的结果打印到终端。`,
-        `Runs ${trimmed} first, then prints its result.`,
+        `先把 ${simpleRef(trimmed) || '这段'} 跑一遍，再把结果打到屏幕上。`,
+        `Runs ${simpleRef(trimmed) || 'this'} first, then prints the result.`,
       ),
-      l2: pick(l, `输出 ${trimmed} 的返回值。`, `Outputs the return value of ${trimmed}.`),
+      l2: pick(l, `输出 ${short(trimmed, 60)} 的返回值。`, `Outputs the return value of ${short(trimmed, 60)}.`),
     };
   }
   return {
     title: pick(l, '打印变量值', 'Print a value'),
-    l1: pick(l, `把 ${trimmed} 当前的值打印到终端。`, `Prints the current value of ${trimmed}.`),
-    l2: pick(l, `输出 ${trimmed}。`, `Outputs ${trimmed}.`),
+    l1: pick(l, `把 ${short(trimmed, 30)} 现在的值打到屏幕上。`, `Prints the current value of ${short(trimmed, 30)}.`),
+    l2: pick(l, `输出 ${short(trimmed, 40)}。`, `Outputs ${short(trimmed, 40)}.`),
   };
 }
 
@@ -301,50 +325,50 @@ function describeCall(f: UnitFacts, l: Lang, hints?: Record<string, string>): Ca
   switch (method) {
     case 'add_node':
       return {
-        title: pick(l, `注册节点 ${a0}`, `Register node ${a0}`),
+        title: pick(l, `加入环节 ${a0}`, `Add step ${a0}`),
         l1: pick(
           l,
-          `在流程图上登记一个叫 ${a0} 的处理节点。`,
-          `Registers ${a0} as a processing node on the graph.`,
+          `在流程图里加一个叫 ${a0} 的环节。`,
+          `Adds a step called ${a0} to the flow.`,
         ),
-        l2: pick(l, `把 ${a0} 注册为图上的节点。`, `Adds ${a0} as a graph node.`),
+        l2: pick(l, `把 ${a0} 加进流程图。`, `Adds ${a0} to the graph.`),
       };
     case 'add_edge':
       return {
         title: pick(l, `连线 ${a0} → ${a1}`, `Connect ${a0} → ${a1}`),
         l1: pick(
           l,
-          `在流程图上画一条线：${a0} 走完就接到 ${a1}。`,
-          `Draws an edge: once ${a0} finishes, the flow goes to ${a1}.`,
+          `在流程图里连一条线：${a0} 走完就轮到 ${a1}。`,
+          `Connects the flow: once ${a0} finishes, ${a1} goes next.`,
         ),
-        l2: pick(l, `添加连线 ${a0} → ${a1}。`, `Adds the edge ${a0} → ${a1}.`),
+        l2: pick(l, `连一条线 ${a0} → ${a1}。`, `Adds the link ${a0} → ${a1}.`),
       };
     case 'add_conditional_edges':
       return {
-        title: pick(l, `按 ${args[1] || '条件'} 分流`, `Route via ${args[1] || 'a router'}`),
+        title: pick(l, `按 ${args[1] || '条件'} 分流`, `Route via ${args[1] || 'a rule'}`),
         l1: pick(
           l,
-          `给 ${a0} 挂一个分岔路口，由 ${args[1] || '一个判断函数'} 决定下一站走哪个节点。`,
-          `Adds a fork after ${a0}; ${args[1] || 'a router'} decides which node comes next.`,
+          `在 ${a0} 后面设一个路口，由 ${args[1] || '一个判断'} 决定下一步走哪边。`,
+          `Puts a fork after ${a0}; ${args[1] || 'a rule'} picks the next step.`,
         ),
         l2: pick(
           l,
-          `为 ${a0} 添加条件分支，用 ${args[1] || '判断函数'} 决定走向。`,
-          `Adds conditional branches from ${a0}, routed by ${args[1] || 'a router'}.`,
+          `给 ${a0} 加岔路，用 ${args[1] || '判断'} 决定走向。`,
+          `Adds branches after ${a0}, picked by ${args[1] || 'a rule'}.`,
         ),
       };
     case 'compile':
       return {
-        title: pick(l, '编译流程图', 'Compile the graph'),
+        title: pick(l, '把流程图变成程序', 'Turn the flow into a program'),
         l1: pick(
           l,
-          `把流程图编译成可以直接运行的程序${expr.includes('checkpointer') ? '，并挂上存档能力（能记住每一轮状态）' : ''}。`,
-          `Compiles the graph into a runnable program${expr.includes('checkpointer') ? ', with checkpointing so every turn is saved' : ''}.`,
+          `把流程图变成一个能直接跑的程序${expr.includes('checkpointer') ? '，并把每一轮的进度存下来' : ''}。`,
+          `Turns the flow into a runnable program${expr.includes('checkpointer') ? ' and saves progress for every turn' : ''}.`,
         ),
         l2: pick(
           l,
-          `编译流程图${expr.includes('checkpointer') ? '（带 checkpointer）' : ''}。`,
-          `Compiles the graph${expr.includes('checkpointer') ? ' with a checkpointer' : ''}.`,
+          `把流程图变成可运行的程序${expr.includes('checkpointer') ? '（带存档）' : ''}。`,
+          `Builds a runnable program from the flow${expr.includes('checkpointer') ? ' with saving' : ''}.`,
         ),
       };
     case 'invoke':
@@ -352,13 +376,13 @@ function describeCall(f: UnitFacts, l: Lang, hints?: Record<string, string>): Ca
         title: pick(l, '执行一轮', 'Run one turn'),
         l1: pick(
           l,
-          `带着输入 ${args[0] || '参数'} 把流程跑一轮，返回这一轮的结果。`,
-          `Runs the flow once with input ${args[0] || 'the arguments'} and returns this turn's result.`,
+          '把这次输入交给流程跑一轮，拿回这一轮的结果。',
+          "Runs the flow once with this input and returns this turn's result.",
         ),
         l2: pick(
           l,
-          `调用 ${name}，输入 ${args[0] || '参数'}${args[1] ? `，配置 ${args[1]}` : ''}。`,
-          `Calls ${name} with input ${args[0] || 'the arguments'}${args[1] ? ` and config ${args[1]}` : ''}.`,
+          `调用 ${name}，输入 ${args[0] || '参数'}${args[1] ? `，附带 ${args[1]}` : ''}。`,
+          `Calls ${name} with input ${args[0] || 'the arguments'}${args[1] ? ` and ${args[1]}` : ''}.`,
         ),
       };
     case 'get_state_history':
@@ -366,10 +390,10 @@ function describeCall(f: UnitFacts, l: Lang, hints?: Record<string, string>): Ca
         title: pick(l, '读取历史存档', 'Read history'),
         l1: pick(
           l,
-          '取出这条对话链保存过的全部历史状态（新的在前）。',
-          'Reads every saved state of this conversation chain (newest first).',
+          '把这条线里存过的历史记录全取出来，新的在前。',
+          'Reads all saved history of this line, newest first.',
         ),
-        l2: pick(l, `调用 ${name} 取出历史状态列表。`, `Calls ${name} to get the list of past states.`),
+        l2: pick(l, `调用 ${name} 取历史记录列表。`, `Calls ${name} to get the history list.`),
       };
     default:
       return callFallback(f, args, l, hints);
@@ -387,16 +411,16 @@ function callFallback(
   const method = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name;
   const hint = hints?.[name] ?? hints?.[method];
   const paramText = args.length
-    ? pick(l, `，参数是 ${args.join(', ')}`, ` with arguments ${args.join(', ')}`)
+    ? pick(l, `，这次用到 ${args.join(', ')}`, ` using ${args.join(', ')}`)
     : '';
   return {
     title: name ? pick(l, `调用 ${name}`, `Call ${name}`) : pick(l, '执行语句', 'Statement'),
     l1: hint
-      ? pick(l, `调用 ${name}（${hint}）${paramText}。`, `Calls ${name} (${hint})${paramText}.`)
+      ? pick(l, `用一下 ${name}（${hint}）${paramText}。`, `Uses ${name} (${hint})${paramText}.`)
       : pick(
         l,
-        `${name ? `调用 ${name}` : '执行一段操作'}${paramText}。`,
-        `${name ? `Calls ${name}` : 'Performs an operation'}${paramText}.`,
+        `${name ? `用一下 ${name}` : '做一步操作'}${paramText}。`,
+        `${name ? `Uses ${name}` : 'Performs an action'}${paramText}.`,
       ),
     l2: pick(
       l,
@@ -412,7 +436,8 @@ export function generateUnit(facts: UnitFacts, options?: DescriptionOptions): Un
   const hints = options?.hints;
   const call = f.kind === 'call' ? describeCall(f, lang, hints) : undefined;
   const title = call ? call.title : titleFor(f, lang);
-  const l1 = f.comment ? f.comment : call ? call.l1 : intentTemplate[f.kind](f, lang);
+  // L1 只用模板说白话；注释仅作参考，不直接照抄
+  const l1 = call ? call.l1 : intentTemplate[f.kind](f, lang);
   const l2 = call ? call.l2 : stepTemplate[f.kind](f, lang);
   const l3 = f.signature ? f.signature : f.condition ?? f.name ?? '';
   return { title, l1, l2, l3 };
