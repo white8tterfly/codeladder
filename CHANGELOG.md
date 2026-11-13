@@ -2,6 +2,26 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.3] - 2026-11-13
+
+### Fixed
+
+- L1 now covers the whole file: module-level code before and after the functions (imports, top-level setup, `__main__` startup flow) gets its own L1 entry, instead of the intent tier showing only a handful of functions.
+- L2 blocks never skip lines; each block is one contiguous range.
+
+## [0.1.2] - 2026-11-13
+
+### Changed
+
+- Business context, L1 intent and L2 steps now require a model. Without an available model these tiers show a setup gate instead of template text; deterministic L3 logic, L4 code and the technical background stay available offline.
+- L1 is now explained per function / interface / class, and L2 per code block (function body, branch, loop, module level), instead of line by line. L3 and L4 keep per-unit precision.
+- The IDE's built-in model is used first when the IDE exposes one; otherwise an OpenAI-compatible endpoint from settings is used.
+- Token cost is controlled: unchanged files and units are reused from an in-memory cache, only changed units are sent, the business summary is regenerated only when its fingerprint changes, and requests are truncated to `codeLadder.llm.maxInputChars`.
+
+### Fixed
+
+- The panel no longer presents template-written intent as if it were a model's analysis.
+
 ## [0.1.1] - 2026-11-13
 
 ### Changed
