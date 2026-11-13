@@ -7,12 +7,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-github/codeladder.git"
+    "url": "https://github.com/white8tterfly/codeladder.git"
   },
   "bugs": {
-    "url": "https://github.com/your-github/codeladder/issues"
+    "url": "https://github.com/white8tterfly/codeladder/issues"
   },
-  "homepage": "https://github.com/your-github/codeladder#readme",
+  "homepage": "https://github.com/white8tterfly/codeladder#readme",
   "icon": "media/icon.png",
   "galleryBanner": {
     "color": "#0f3d3a",
