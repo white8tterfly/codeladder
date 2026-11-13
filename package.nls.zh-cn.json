@@ -1,0 +1,12 @@
+{
+  "cmd.explain": "生成四档解释",
+  "cmd.refresh": "重新生成",
+  "cmd.rebuildIndex": "重建工程索引",
+  "config.language.auto": "跟随 IDE 显示语言（中文环境用中文，其余用英文）",
+  "config.language.zh": "中文",
+  "config.language.en": "English",
+  "config.language.desc": "CodeLadder 解释与面板使用的语言。`auto` 跟随 IDE 显示语言。",
+  "config.llm.baseUrl.desc": "备用 OpenAI 兼容接口地址（如 `https://api.deepseek.com/v1`）。CodeLadder 会优先使用 IDE 暴露的模型（`vscode.lm`），仅在拿不到模型时使用这里的配置。留空则只用本地确定性工程索引。",
+  "config.llm.apiKey.desc": "备用接口的 API Key（明文保存，建议仅在个人设备使用）。",
+  "config.llm.model.desc": "模型名称，如 `deepseek-chat`。"
+}

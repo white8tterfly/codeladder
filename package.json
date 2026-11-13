@@ -57,18 +57,18 @@
     "commands": [
       {
         "command": "codeReadable.explain",
-        "title": "Generate Four Tiers",
+        "title": "%cmd.explain%",
         "category": "CodeLadder",
         "icon": "$(book)"
       },
       {
         "command": "codeReadable.refresh",
-        "title": "Regenerate",
+        "title": "%cmd.refresh%",
         "category": "CodeLadder"
       },
       {
         "command": "codeReadable.rebuildIndex",
-        "title": "Rebuild Project Index",
+        "title": "%cmd.rebuildIndex%",
         "category": "CodeLadder"
       }
     ],
@@ -83,27 +83,27 @@
             "en"
           ],
           "enumDescriptions": [
-            "Follow the IDE display language (Chinese → 中文, otherwise English)",
-            "Chinese (中文)",
-            "English"
+            "%config.language.auto%",
+            "%config.language.zh%",
+            "%config.language.en%"
           ],
           "default": "auto",
-          "markdownDescription": "Language used by CodeLadder explanations and the panel. `auto` follows the IDE display language."
+          "markdownDescription": "%config.language.desc%"
         },
         "codeLadder.llm.baseUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Fallback OpenAI-compatible API base URL (e.g. `https://api.deepseek.com/v1`). CodeLadder first tries a language model exposed by the IDE (`vscode.lm`); these settings are used only when none is available. Leave empty to use the deterministic project index only."
+          "markdownDescription": "%config.llm.baseUrl.desc%"
         },
         "codeLadder.llm.apiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "API key for the fallback endpoint (stored in plain text; recommended for personal devices only)."
+          "markdownDescription": "%config.llm.apiKey.desc%"
         },
         "codeLadder.llm.model": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Model name, e.g. `deepseek-chat`."
+          "markdownDescription": "%config.llm.model.desc%"
         }
       }
     },
