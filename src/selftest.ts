@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   for (const t of tiers) {
     console.log(`\n--- ${t} ${tierNames[t]} ---`);
     payload.tiers[t].forEach((b) => {
-      const fid = b.fidelity === 'ai' ? 'AI' : 'OK';
+      const fid = b.fidelity === 'ai' ? 'AI' : b.fidelity === 'inferred' ? 'INF' : 'OK';
       const lr = b.lines.map((r) => (r.start === r.end ? `L${r.start}` : `L${r.start}-${r.end}`)).join(',');
       const content = b.content.replace(/\n/g, ' / ');
       console.log(`  [${fid}][${lr}] ${b.title}: ${content}`);

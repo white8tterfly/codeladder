@@ -1,7 +1,10 @@
 // 核心数据模型：语义单元（确定性逻辑模型）与四档投影
 
 export type TierId = 'L1' | 'L2' | 'L3' | 'L4';
-export type Fidelity = 'ok' | 'ai'; // ok = 确定性（AST 推导）；ai = 语义归纳（⚠）
+// ok = 确定性（AST 直接推导）
+// inferred = 语义推断（模板/注释归纳，未调用模型）
+// ai = 模型归纳（LLM 改写过的内容）
+export type Fidelity = 'ok' | 'inferred' | 'ai';
 
 /** 1-based 行号区间，含两端 */
 export interface LineRange {

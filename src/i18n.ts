@@ -29,6 +29,7 @@ export interface UiText {
   contextBasis: string;
   ctxToggle: string;
   fidOk: string;
+  fidInferred: string;
   fidAi: string;
   empty: string;
   tiers: Record<'L1' | 'L2' | 'L3' | 'L4', TierText>;
@@ -48,13 +49,14 @@ const ZH: UiText = {
   windowTitle: 'CodeLadder · 四档代码学习',
   sub: '四档投影 L1–L4 · 逐级从白话读懂代码',
   legendOk: '✓ 确定性（AST 推导）',
-  legendAi: '⚠ AI 生成（语义归纳）',
+  legendAi: '⚠ 语义推断（非代码直译）',
   hint: 'L1→L4 颜色由浅到深（越深越接近真实代码） · 点击解释块跳转并高亮整块 · 点行号徽章定位单行',
   contextTitle: '业务背景',
   contextBasis: '依据：',
   ctxToggle: '点击收起 / 展开业务背景',
   fidOk: '✓ 确定性',
-  fidAi: '⚠ AI 生成',
+  fidInferred: '⚠ 推断',
+  fidAi: '⚠ AI 归纳',
   empty: '在受支持的文件里运行「CodeLadder：生成四档解释」',
   tiers: {
     L1: { name: '意图', desc: '纯白话 · 零术语' },
@@ -78,13 +80,14 @@ const EN: UiText = {
   windowTitle: 'CodeLadder · Four-tier code reading',
   sub: 'Four tiers L1–L4 · climb from plain language to code',
   legendOk: '✓ Deterministic (from AST)',
-  legendAi: '⚠ AI-generated (semantic)',
+  legendAi: '⚠ Inferred (not literal code)',
   hint: 'L1→L4 colors get darker as you approach real code · Click a block to jump and highlight it · Click a line badge to jump to that line',
   contextTitle: 'Project context',
   contextBasis: 'Based on: ',
   ctxToggle: 'Click to collapse or expand the project context',
   fidOk: '✓ Deterministic',
-  fidAi: '⚠ AI-generated',
+  fidInferred: '⚠ Inferred',
+  fidAi: '⚠ AI-written',
   empty: 'Open a supported file and run "CodeLadder: Generate Four Tiers"',
   tiers: {
     L1: { name: 'Intent', desc: 'Plain words · no jargon' },

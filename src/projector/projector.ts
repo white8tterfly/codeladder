@@ -53,8 +53,8 @@ export function buildProjection(
     const desc = generateUnit(unit.facts, { lang: options?.lang, hints: options?.hints });
     const base = { unitIndex, title: desc.title, lines: unit.lines };
 
-    // L1：意图（⚠ AI 生成）
-    tiers.L1.push({ ...base, fidelity: 'ai', mode: 'text', content: desc.l1 });
+    // L1：意图（⚠ 语义推断；接入模型后改为 AI 归纳）
+    tiers.L1.push({ ...base, fidelity: 'inferred', mode: 'text', content: desc.l1 });
     // L2：步骤（✓ 确定性）
     tiers.L2.push({ ...base, fidelity: 'ok', mode: 'text', content: desc.l2 });
     // L3：逻辑 / 结构（✓ 确定性，等宽展示）

@@ -229,7 +229,7 @@ main{position:relative;z-index:1;flex:1 1 auto;overflow:auto;min-height:0;scroll
 .block-title{flex:1 1 auto;font-size:13px;font-weight:700;letter-spacing:-.005em;line-height:1.45}
 .fid{flex:0 0 auto;font-size:9.5px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:999px;white-space:nowrap}
 .fid-ok{color:var(--ok);background:var(--ok-bg)}
-.fid-ai{color:var(--ai);background:var(--ai-bg)}
+.fid-inferred,.fid-ai{color:var(--ai);background:var(--ai-bg)}
 .block-meta{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px}
 .line-badge{font-family:var(--mono);font-size:10px;font-variant-numeric:tabular-nums;color:var(--tier-ink);background:var(--tier-soft);border:1px solid transparent;border-radius:6px;padding:1px 6px;cursor:pointer;transition:border-color .12s ease,background .12s ease}
 .line-badge:hover{border-color:var(--tier);background:var(--surface)}
@@ -304,6 +304,13 @@ const JS = `
     return (r.start === r.end) ? ('L' + r.start) : ('L' + r.start + '-' + r.end);
   }
 
+  // fidelity: ok = 代码直译；inferred = 模板/注释推断；ai = 模型改写
+  function fidBadge(f){
+    if(f === 'ai'){ return '<span class="fid fid-ai">' + UI.fidAi + '</span>'; }
+    if(f === 'inferred'){ return '<span class="fid fid-inferred">' + UI.fidInferred + '</span>'; }
+    return '<span class="fid fid-ok">' + UI.fidOk + '</span>';
+  }
+
   function applyTier(t){
     document.documentElement.setAttribute('data-tier', t);
     var tabs = document.querySelectorAll('.tier-tab');
@@ -335,9 +342,7 @@ const JS = `
   function renderContext(ctx){
     var el = document.getElementById('ctx');
     if(!ctx || !ctx.summary){ el.style.display = 'none'; return; }
-    var fid = (ctx.fidelity === 'ai')
-      ? '<span class="fid fid-ai">' + UI.fidAi + '</span>'
-      : '<span class="fid fid-ok">' + UI.fidOk + '</span>';
+    var fid = fidBadge(ctx.fidelity);
     var bullets = (ctx.bullets || []).map(function(b){ return '<li>' + esc(b) + '</li>'; }).join('');
     var sources = (ctx.sources || []).map(function(s){ return '<span class="ctx-src">' + esc(s) + '</span>'; }).join('');
     el.innerHTML = '<div class="ctx-head" id="ctx-head" role="button" tabindex="0" aria-expanded="' + (!ctxCollapsed) + '" title="' + esc(UI.ctxToggle) + '">' +
@@ -384,9 +389,7 @@ const JS = `
         var r = b.lines[j];
         badges += '<button class="line-badge" data-start="' + r.start + '" data-end="' + r.end + '">' + badgeLabel(r) + '</button>';
       }
-      var fid = (b.fidelity === 'ai')
-        ? '<span class="fid fid-ai">' + UI.fidAi + '</span>'
-        : '<span class="fid fid-ok">' + UI.fidOk + '</span>';
+      var fid = fidBadge(b.fidelity);
       var body;
       if(b.mode === 'code'){
         body = '<pre class="snippet">' + hl(b.content) + '</pre>';
