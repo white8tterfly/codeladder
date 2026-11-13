@@ -1,0 +1,143 @@
+{
+  "name": "codeladder",
+  "displayName": "CodeLadder · Four-tier Code Reading",
+  "description": "CodeLadder turns Python, TypeScript, C, C++, Java, Rust and Go into four readable tiers — intent (L1), steps (L2), logic (L3) and code (L4) — so non-developers can climb from plain language down to the implementation, with project context and two-way highlighting.",
+  "version": "0.1.0",
+  "publisher": "codeladder",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-github/codeladder.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-github/codeladder/issues"
+  },
+  "homepage": "https://github.com/your-github/codeladder#readme",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0f3d3a",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Education",
+    "Other"
+  ],
+  "keywords": [
+    "readability",
+    "explain",
+    "python",
+    "typescript",
+    "java",
+    "rust",
+    "go",
+    "c",
+    "cpp",
+    "learning",
+    "education",
+    "tree-sitter",
+    "non-developer"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:c",
+    "onLanguage:cpp",
+    "onLanguage:java",
+    "onLanguage:rust",
+    "onLanguage:go"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codeReadable.explain",
+        "title": "Generate Four Tiers",
+        "category": "CodeLadder",
+        "icon": "$(book)"
+      },
+      {
+        "command": "codeReadable.refresh",
+        "title": "Regenerate",
+        "category": "CodeLadder"
+      },
+      {
+        "command": "codeReadable.rebuildIndex",
+        "title": "Rebuild Project Index",
+        "category": "CodeLadder"
+      }
+    ],
+    "configuration": {
+      "title": "CodeLadder",
+      "properties": {
+        "codeLadder.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "zh",
+            "en"
+          ],
+          "enumDescriptions": [
+            "Follow the IDE display language (Chinese → 中文, otherwise English)",
+            "Chinese (中文)",
+            "English"
+          ],
+          "default": "auto",
+          "markdownDescription": "Language used by CodeLadder explanations and the panel. `auto` follows the IDE display language."
+        },
+        "codeLadder.llm.baseUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Fallback OpenAI-compatible API base URL (e.g. `https://api.deepseek.com/v1`). CodeLadder first tries a language model exposed by the IDE (`vscode.lm`); these settings are used only when none is available. Leave empty to use the deterministic project index only."
+        },
+        "codeLadder.llm.apiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "API key for the fallback endpoint (stored in plain text; recommended for personal devices only)."
+        },
+        "codeLadder.llm.model": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Model name, e.g. `deepseek-chat`."
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codeReadable.explain",
+          "when": "resourceLangId == python || resourceLangId == typescript || resourceLangId == typescriptreact || resourceLangId == c || resourceLangId == cpp || resourceLangId == java || resourceLangId == rust || resourceLangId == go",
+          "group": "navigation@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "codeReadable.explain",
+          "when": "resourceLangId == python || resourceLangId == typescript || resourceLangId == typescriptreact || resourceLangId == c || resourceLangId == cpp || resourceLangId == java || resourceLangId == rust || resourceLangId == go",
+          "group": "navigation@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "selftest": "node out/selftest.js",
+    "package": "npx --yes @vscode/vsce package",
+    "publish:vsce": "npx --yes @vscode/vsce publish",
+    "publish:ovsx": "npx --yes ovsx publish"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "web-tree-sitter": "0.20.8",
+    "tree-sitter-wasms": "0.1.13"
+  }
+}
