@@ -32,8 +32,8 @@ Most "explain this code" tools give you one long answer in a chat window, discon
 | IDE | How to install |
 | --- | --- |
 | **VS Code** | Extensions view → search `CodeLadder`, or `code --install-extension codeladder.codeladder` |
-| **Trae** | Extensions view → search `CodeLadder` (Trae's gallery reads Open VSX), or `trae-cn --install-extension codeladder-0.1.0.vsix` |
-| **Qoder** | Extensions view → `...` → **Install from VSIX**, or `qoder --install-extension codeladder-0.1.0.vsix` |
+| **Trae** | Extensions view → search `CodeLadder` (Trae's gallery reads Open VSX), or `trae-cn --install-extension codeladder-0.1.1.vsix` from the [latest release](https://github.com/white8tterfly/codeladder/releases/latest) |
+| **Qoder** | Extensions view → `...` → **Install from VSIX**, or `qoder --install-extension codeladder-0.1.1.vsix` |
 | **Other VS Code-compatible IDEs** | Download the `.vsix` from the releases page and install it from the Extensions view |
 
 ---
@@ -186,6 +186,11 @@ CodeLadder asks the IDE for a built-in language model first (the `vscode.lm` API
 ---
 
 ## Release notes
+
+### 0.1.1
+
+- Fidelity badges are now honest: L1 reads *Inferred* offline and *AI-written* only when a model produced it.
+- Command titles and setting descriptions follow the IDE display language (English / 简体中文).
 
 ### 0.1.0
 
