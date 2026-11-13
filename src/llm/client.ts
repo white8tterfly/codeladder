@@ -1,12 +1,12 @@
 // LLM 语义层：业务背景、L1 意图、L2 步骤都必须由模型归纳。
 // 控制 token 消耗：
-//   1. 只发送本次真正需要的单元代码（由上层按缓存算出 targets），未变化单元不重复发送；
-//   2. 代码按字符预算截断，超出的单元留给下一次运行继续补齐；
+//   1. 只发送本次真正需要的分组代码（由上层按缓存算出 targets），未变化分组不重复发送；
+//   2. 超长文件按字符预算拆成多批请求，逐批生成并合并，保证整份文件都被解释到；
 //   3. 相同内容/相同目标的并发请求合并为一个，避免重复计费。
-// 结构（行号、单元边界）始终来自 AST；模型返回值必须锚定到已有 unit index，否则丢弃。
+// 结构（行号、单元边界）始终来自 AST；模型返回值必须锚定到已有分组序号，否则丢弃。
 
 import * as vscode from 'vscode';
-import type { ExplainGroups } from '../model/types';
+import type { ExplainGroups, LineRange } from '../model/types';
 import type { Lang } from '../i18n';
 import type { FileContext } from '../context/contextBuilder';
 import { hashText } from './analysisCache';
@@ -46,9 +46,16 @@ interface LlmConfig {
 
 const TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_INPUT_CHARS = 24_000;
-const MAX_OUTLINE_CHARS = 6_000;
 const PER_UNIT_CHARS = 1_600;
 const PER_BLOCK_CHARS = 800;
+/** 单次运行最多拆成多少批，防止超大文件一次打出过多请求 */
+const MAX_BATCHES = 12;
+
+/** 一批模型请求覆盖的分组序号 */
+interface Batch {
+  l1: number[];
+  l2: number[];
+}
 
 /** IDE 内置模型（Language Model API）的最小结构，运行时探测，避免绑定高版本 types */
 interface IdeChatModel {
@@ -150,13 +157,49 @@ async function runRequest(
   needSummary: boolean,
   maxInputChars: number,
 ): Promise<LlmOutcome> {
+  // 分组数超过一次请求的预算时拆成多批，保证文件从头到尾都被解释，
+  // 而不是只解释排在前面的那一半。
+  const planned = planBatches(source, groups, l1Targets, l2Targets, maxInputChars);
+  if (planned.length === 0) {
+    if (!needSummary) {
+      return { ok: true, summary: '', bullets: [], l1: {}, l2: {} };
+    }
+    planned.push({ l1: [], l2: [] });
+  }
+  const batches = planned.slice(0, MAX_BATCHES);
   const system = lang === 'zh' ? SYSTEM_PROMPT_ZH : SYSTEM_PROMPT_EN;
-  const built = buildUserPrompt(source, groups, ctx, lang, l1Targets, l2Targets, needSummary, maxInputChars);
-  if (!built) {
-    return { ok: false, reason: 'failed', detail: 'input too large' };
+  const merged: LlmSuccess = { ok: true, summary: '', bullets: [], l1: {}, l2: {} };
+
+  for (let i = 0; i < batches.length; i++) {
+    const wantSummary = needSummary && i === 0;
+    const built = buildUserPrompt(source, groups, ctx, lang, batches[i], wantSummary);
+    const outcome = await requestBatch(system, built, wantSummary);
+    if (!outcome.ok) {
+      // 第一批就失败：整次视为失败；后续批次失败：保留已经生成的部分
+      if (i === 0) {
+        return outcome;
+      }
+      break;
+    }
+    if (outcome.summary) {
+      merged.summary = outcome.summary;
+    }
+    if (outcome.bullets.length > 0) {
+      merged.bullets = outcome.bullets;
+    }
+    Object.assign(merged.l1, outcome.l1);
+    Object.assign(merged.l2, outcome.l2);
   }
 
-  // 1) 优先用 IDE 内置模型（无需 API Key）
+  return merged;
+}
+
+/** 请求一批分组：优先 IDE 内置模型，失败再回退到自配端点 */
+async function requestBatch(
+  system: string,
+  built: { prompt: string; l1Allowed: Set<number>; l2Allowed: Set<number> },
+  needSummary: boolean,
+): Promise<LlmOutcome> {
   const ideModel = await pickIdeModel();
   let ideFailure: LlmFailure | undefined;
   if (ideModel) {
@@ -167,7 +210,6 @@ async function runRequest(
     ideFailure = viaIde;
   }
 
-  // 2) 回退到自配的 OpenAI 兼容端点；两者都不可用时给出明确原因
   const config = readConfig();
   if (!config) {
     if (ideFailure) {
@@ -270,25 +312,24 @@ function buildUserPrompt(
   groups: ExplainGroups,
   ctx: FileContext,
   lang: Lang,
-  l1Targets: number[],
-  l2Targets: number[],
+  batch: Batch,
   needSummary: boolean,
-  maxInputChars: number,
-): { prompt: string; l1Allowed: Set<number>; l2Allowed: Set<number> } | undefined {
-  const selected = selectGroupsWithinBudget(source, groups, l1Targets, l2Targets, maxInputChars);
-  const l1Allowed = new Set(selected.l1Included);
-  const l2Allowed = new Set(selected.l2Included);
-  if (!needSummary && l1Allowed.size === 0 && l2Allowed.size === 0) {
-    return undefined;
-  }
+): { prompt: string; l1Allowed: Set<number>; l2Allowed: Set<number> } {
+  const l1Allowed = new Set(batch.l1);
+  const l2Allowed = new Set(batch.l2);
+  const sourceLines = source.split('\n');
+  const snippet = [
+    ...batch.l1.map((idx) => groupSnippet('L1', idx, groups.l1[idx].lines, sourceLines, PER_UNIT_CHARS)),
+    ...batch.l2.map((idx) => groupSnippet('L2', idx, groups.l2[idx].lines, sourceLines, PER_BLOCK_CHARS)),
+  ].join('\n');
 
   const outline = [
-    buildGroupOutline('L1', groups.l1, '函数 / 接口 / 类', 'functions / interfaces / classes', lang),
-    buildGroupOutline('L2', groups.l2, '代码块', 'code blocks', lang),
+    buildGroupOutline('L1', groups.l1, batch.l1, '函数 / 接口 / 类', 'functions / interfaces / classes', lang),
+    buildGroupOutline('L2', groups.l2, batch.l2, '代码块', 'code blocks', lang),
   ].join('\n\n');
   const requested = [
-    `L1: ${selected.l1Included.join(', ') || '-'}`,
-    `L2: ${selected.l2Included.join(', ') || '-'}`,
+    `L1: ${batch.l1.join(', ') || '-'}`,
+    `L2: ${batch.l2.join(', ') || '-'}`,
   ].join('\n');
 
   if (lang === 'en') {
@@ -304,7 +345,7 @@ function buildUserPrompt(
       requested,
       '',
       '## Code for these groups only (line<TAB>content)',
-      selected.snippet || '(no code needed)',
+      snippet || '(no code needed)',
       '',
       '## Task',
     ];
@@ -340,7 +381,7 @@ function buildUserPrompt(
     requested,
     '',
     '## 仅这些分组的代码（行号<TAB>内容）',
-    selected.snippet || '（无需代码）',
+    snippet || '（无需代码）',
     '',
     '## 任务',
   ];
@@ -364,10 +405,11 @@ function buildUserPrompt(
   return { prompt: lines.join('\n'), l1Allowed, l2Allowed };
 }
 
-/** 分组总览：只发序号/名称/行号，字符便宜，让模型知道文件全貌 */
+/** 分组总览：只发本批的序号/名称/行号，字符便宜，让模型知道这部分在全文件里的位置 */
 function buildGroupOutline(
   tier: 'L1' | 'L2',
   groups: ExplainGroups['l1'],
+  indexes: number[],
   zhLabel: string,
   enLabel: string,
   lang: Lang,
@@ -375,81 +417,88 @@ function buildGroupOutline(
   const head = lang === 'en'
     ? `### ${tier} (${enLabel}) index<TAB>name<TAB>lines`
     : `### ${tier}（${zhLabel}）序号<TAB>名称<TAB>行号`;
-  const rows: string[] = [];
-  let used = 0;
-  for (let i = 0; i < groups.length; i++) {
-    const g = groups[i];
-    const row = `${i}\t${clip(g.title, 60)}\t${lineLabel(g.lines)}`;
-    if (used + row.length > MAX_OUTLINE_CHARS / 2) {
-      rows.push(`…（其余 ${groups.length - i} 个分组省略）`);
-      break;
-    }
-    rows.push(row);
-    used += row.length + 1;
-  }
-  return `${head}\n${rows.join('\n')}`;
+  const rows = indexes
+    .map((i) => {
+      const g = groups[i];
+      return g ? `${i}\t${clip(g.title, 60)}\t${lineLabel(g.lines)}` : '';
+    })
+    .filter((row) => row.length > 0);
+  return `${head}\n${rows.length > 0 ? rows.join('\n') : '-'}`;
 }
 
 function lineLabel(lines: { start: number; end: number }[]): string {
   return lines.map((r) => (r.start === r.end ? `L${r.start}` : `L${r.start}-L${r.end}`)).join(',');
 }
 
-/** 只挑本次需要的分组代码，并受总字符预算约束；放不下的留给下一次运行 */
-function selectGroupsWithinBudget(
+/** 单个分组的代码片段（含行号），超长时截断并标省略号 */
+function groupSnippet(
+  tier: 'L1' | 'L2',
+  idx: number,
+  ranges: LineRange[],
+  sourceLines: string[],
+  perGroupChars: number,
+): string {
+  const header = `### ${tier} #${idx} · ${lineLabel(ranges)}\n`;
+  let body = '';
+  for (const r of ranges) {
+    for (let n = r.start; n <= r.end; n++) {
+      const text = `${n}\t${sourceLines[n - 1] ?? ''}\n`;
+      if (body.length + text.length > perGroupChars) {
+        return `${header}${body}…\n`;
+      }
+      body += text;
+    }
+  }
+  return header + body;
+}
+
+/**
+ * 按字符预算把待生成分组拆成多批。
+ * 每批装到装不下为止，保证排在文件后半段的分组也能轮到一次请求。
+ */
+function planBatches(
   source: string,
   groups: ExplainGroups,
   l1Targets: number[],
   l2Targets: number[],
   budget: number,
-): { snippet: string; l1Included: number[]; l2Included: number[] } {
+): Batch[] {
   const sourceLines = source.split('\n');
-  const blocks: string[] = [];
-  const l1Included: number[] = [];
-  const l2Included: number[] = [];
+  const batches: Batch[] = [];
+  let current: Batch = { l1: [], l2: [] };
   let used = 0;
 
-  const add = (tier: 'L1' | 'L2', idx: number, ranges: { start: number; end: number }[], perGroupChars: number): void => {
-    const header = `### ${tier} #${idx} · ${lineLabel(ranges)}\n`;
-    let body = '';
-    for (const r of ranges) {
-      for (let n = r.start; n <= r.end; n++) {
-        const text = `${n}\t${sourceLines[n - 1] ?? ''}\n`;
-        if (body.length + text.length > perGroupChars) {
-          body += '…\n';
-          break;
-        }
-        body += text;
-      }
-      if (body.endsWith('…\n')) {
-        break;
-      }
+  const push = (tier: 'L1' | 'L2', idx: number, ranges: LineRange[], perGroupChars: number): void => {
+    const cost = groupSnippet(tier, idx, ranges, sourceLines, perGroupChars).length;
+    if (used > 0 && used + cost > budget) {
+      batches.push(current);
+      current = { l1: [], l2: [] };
+      used = 0;
     }
-    if (used + header.length + body.length > budget) {
-      return;
-    }
-    used += header.length + body.length;
-    blocks.push(header + body);
+    used += cost;
     if (tier === 'L1') {
-      l1Included.push(idx);
+      current.l1.push(idx);
     } else {
-      l2Included.push(idx);
+      current.l2.push(idx);
     }
   };
 
   for (const idx of l1Targets) {
     const g = groups.l1[idx];
     if (g) {
-      add('L1', idx, g.lines, PER_UNIT_CHARS);
+      push('L1', idx, g.lines, PER_UNIT_CHARS);
     }
   }
   for (const idx of l2Targets) {
     const g = groups.l2[idx];
     if (g) {
-      add('L2', idx, g.lines, PER_BLOCK_CHARS);
+      push('L2', idx, g.lines, PER_BLOCK_CHARS);
     }
   }
-
-  return { snippet: blocks.join('\n'), l1Included, l2Included };
+  if (current.l1.length > 0 || current.l2.length > 0) {
+    batches.push(current);
+  }
+  return batches;
 }
 
 function parseResult(
