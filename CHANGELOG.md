@@ -2,6 +2,18 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.1] - 2026-11-13
+
+### Changed
+
+- Command titles and setting descriptions now follow the IDE display language (English / 简体中文) instead of always showing English.
+- The Intent tier (L1) is labelled **Inferred** instead of *AI-generated* when no model is involved, so the badge only reads *AI-written* for content actually produced by a model.
+
+### Fixed
+
+- Fidelity markers no longer claim AI generation in offline, deterministic mode.
+- Intent blocks are marked `inferred` instead of `ai`, keeping the three states (`deterministic`, `inferred`, `ai-written`) distinct.
+
 ## [0.1.0] - 2026-11-13
 
 First public release.
