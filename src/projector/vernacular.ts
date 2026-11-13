@@ -21,6 +21,8 @@ export interface UnitDescription {
 export interface DescriptionOptions {
   lang?: Lang;
   hints?: Record<string, string>;
+  /** 该单元在源码中实际覆盖的行数，用于结构摘要 */
+  lineCount?: number;
 }
 
 function pick(lang: Lang, zh: string, en: string): string {
@@ -430,6 +432,67 @@ function callFallback(
   };
 }
 
+const STRUCT_BLOCK: Array<[RegExp, string, string]> = [
+  [/^\s*try\b/, 'try / except 异常处理块', 'try / except block'],
+  [/^\s*with\b/, 'with 上下文块', 'with block'],
+  [/^\s*while\b/, 'while 循环块', 'while loop'],
+  [/^\s*match\b/, 'match 分支块', 'match block'],
+  [/^\s*raise\b/, '抛出异常', 'raise'],
+  [/^\s*assert\b/, '断言检查', 'assert'],
+  [/^\s*async\b/, '异步代码块', 'async block'],
+  [/^\s*(?:break|continue|pass|global|del)\b/, '控制流语句', 'control-flow statement'],
+];
+
+/** 去掉 if / for 关键字和结尾冒号，只留条件本身 */
+function conditionText(line: string, keyword: 'if' | 'for'): string {
+  return line.replace(new RegExp(`^${keyword}\\s+`), '').replace(/:\s*$/, '').trim();
+}
+
+/** L3 的结构摘要：只说结构，不贴源代码，避免和 L4 重复 */
+function structureFor(f: UnitFacts, l: Lang, spanLines?: number): string {
+  const sig = (f.signature ?? '').trimEnd();
+  const firstLine = sig.split('\n')[0].trim();
+  const lineCount = spanLines && spanLines > 0 ? spanLines : (sig ? sig.split('\n').length : 0);
+
+  switch (f.kind) {
+    case 'call': {
+      const args = f.callExpr ? callArgs(f.callExpr) : [];
+      const name = f.name || '这个函数';
+      return pick(
+        l,
+        `调用 ${name}（${args.length} 个参数）`,
+        `Calls ${name} (${args.length} argument${args.length === 1 ? '' : 's'})`,
+      );
+    }
+    case 'statement': {
+      for (const [re, zh, en] of STRUCT_BLOCK) {
+        if (re.test(firstLine)) {
+          return pick(l, `${zh}（${lineCount} 行）`, `${en} (${lineCount} lines)`);
+        }
+      }
+      return pick(l, `单条语句（${lineCount} 行）`, `A single statement (${lineCount} lines)`);
+    }
+    case 'docstring':
+      return pick(l, `模块说明（${lineCount} 行）`, `Module note (${lineCount} lines)`);
+    case 'comment':
+      return pick(l, '一段说明注释', 'An explanatory comment');
+    case 'if':
+      return pick(
+        l,
+        `条件判断：${short(conditionText(firstLine, 'if'), 60)}`,
+        `Condition: ${short(conditionText(firstLine, 'if'), 60)}`,
+      );
+    case 'for':
+      return pick(
+        l,
+        `循环：${short(conditionText(firstLine, 'for'), 60)}`,
+        `Loop: ${short(conditionText(firstLine, 'for'), 60)}`,
+      );
+    default:
+      return firstLine ? short(firstLine, 70) : pick(l, '一条声明', 'A declaration');
+  }
+}
+
 export function generateUnit(facts: UnitFacts, options?: DescriptionOptions): UnitDescription {
   const f = facts;
   const lang: Lang = options?.lang ?? 'zh';
@@ -439,7 +502,7 @@ export function generateUnit(facts: UnitFacts, options?: DescriptionOptions): Un
   // L1 只用模板说白话；注释仅作参考，不直接照抄
   const l1 = call ? call.l1 : intentTemplate[f.kind](f, lang);
   const l2 = call ? call.l2 : stepTemplate[f.kind](f, lang);
-  const l3 = f.signature ? f.signature : f.condition ?? f.name ?? '';
+  const l3 = call ? short(call.l2, 80) : structureFor(f, lang, options?.lineCount);
   return { title, l1, l2, l3 };
 }
 

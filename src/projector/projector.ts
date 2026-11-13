@@ -85,7 +85,8 @@ export function buildProjection(
 
   // L3 / L4：逐单元，确定性
   units.forEach((unit, unitIndex) => {
-    const desc = generateUnit(unit.facts, { lang, hints: options?.hints });
+    const lineCount = unit.lines.reduce((n, r) => n + (r.end - r.start + 1), 0);
+    const desc = generateUnit(unit.facts, { lang, hints: options?.hints, lineCount });
     const base = { unitIndex, focusUnits: [unitIndex], title: desc.title, lines: unit.lines };
 
     // L3：逻辑 / 结构（✓ 确定性，等宽展示）
