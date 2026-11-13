@@ -105,6 +105,7 @@ const intentTemplate: Record<UnitKind, (f: UnitFacts, l: Lang) => string> = {
   },
   call: (f, l) => describeCall(f, l).l1,
   comment: (_f, l) => pick(l, '一段写给人看的说明。', 'A note written for people.'),
+  block: (f, l) => pick(l, `处理「${blockName(f.name, l)}」。`, `Handles "${blockName(f.name, l)}".`),
   statement: (_f, l) => pick(l, '做一步操作。', 'Does one step.'),
 };
 
@@ -145,6 +146,11 @@ const stepTemplate: Record<UnitKind, (f: UnitFacts, l: Lang) => string> = {
   ),
   call: (f, l) => describeCall(f, l).l2,
   comment: (f, l) => f.comment || pick(l, '注释。', 'A comment.'),
+  block: (f, l) => pick(
+    l,
+    `按「${blockName(f.name, l)}」组织这一段流程。`,
+    `Groups this part as "${blockName(f.name, l)}".`,
+  ),
   statement: (f, l) => pick(
     l,
     `执行${f.signature ? `：${short(f.signature, 60)}` : '一步'}。`,
@@ -443,8 +449,25 @@ const STRUCT_BLOCK: Array<[RegExp, string, string]> = [
   [/^\s*(?:break|continue|pass|global|del)\b/, '控制流语句', 'control-flow statement'],
 ];
 
-/** 去掉 if / for 关键字和结尾冒号，只留条件本身 */
-function conditionText(line: string, keyword: 'if' | 'for'): string {
+/** 复合语句块的中英文名（解析器里存的是中文内部名） */
+const BLOCK_NAMES: Record<string, [string, string]> = {
+  异常处理: ['异常处理', 'Error handling'],
+  异常分支: ['异常分支', 'Error branch'],
+  正常收尾: ['正常收尾', 'Success path'],
+  最终处理: ['最终处理', 'Finally'],
+  上下文管理: ['上下文管理', 'Context block'],
+  循环: ['循环', 'Loop'],
+  模式匹配: ['模式匹配', 'Match'],
+  分支: ['分支', 'Case'],
+};
+
+function blockName(name: string | undefined, l: Lang): string {
+  const hit = name ? BLOCK_NAMES[name] : undefined;
+  return hit ? pick(l, hit[0], hit[1]) : name || pick(l, '语句块', 'Block');
+}
+
+/** 去掉 if / for / while 等关键字和结尾冒号，只留条件本身 */
+function conditionText(line: string, keyword: string): string {
   return line.replace(new RegExp(`^${keyword}\\s+`), '').replace(/:\s*$/, '').trim();
 }
 
@@ -455,6 +478,45 @@ function structureFor(f: UnitFacts, l: Lang, spanLines?: number): string {
   const lineCount = spanLines && spanLines > 0 ? spanLines : (sig ? sig.split('\n').length : 0);
 
   switch (f.kind) {
+    case 'block': {
+      const name = blockName(f.name, l);
+      if (/^try\b/.test(firstLine)) {
+        return pick(l, '异常处理：先跑正常流程，出错走兜底', 'Error handling: normal path first, fallback on failure');
+      }
+      if (/^with\b/.test(firstLine) || /^using\b/.test(firstLine)) {
+        const expr = firstLine.replace(/^\w+\s+/, '').replace(/:\s*$/, '');
+        return pick(l, `上下文管理：${short(expr, 40)}`, `Context block: ${short(expr, 40)}`);
+      }
+      if (/^while\b/.test(firstLine)) {
+        return pick(
+          l,
+          `循环：${short(conditionText(firstLine, 'while'), 50)}`,
+          `Loop: ${short(conditionText(firstLine, 'while'), 50)}`,
+        );
+      }
+      if (/^match\b/.test(firstLine) || /^switch\b/.test(firstLine)) {
+        const subject = firstLine.replace(/^\w+\s+/, '').replace(/[({]\s*$/, '').replace(/\s*[:)]\s*$/, '');
+        return pick(l, `模式匹配：${short(subject, 40)}`, `Match: ${short(subject, 40)}`);
+      }
+      if (/^catch\b/.test(firstLine) || /^except\b/.test(firstLine)) {
+        const err = firstLine.replace(/^(catch|except)\s*/, '').replace(/^\(\s*|\s*\)$/g, '').replace(/:\s*$/, '');
+        return pick(l, `捕获异常：${short(err, 40) || '任意异常'}`, `Catches ${short(err, 40) || 'any error'}`);
+      }
+      if (/^else\b/.test(firstLine)) {
+        if (f.name === '循环收尾') {
+          return pick(l, '循环收尾：循环正常结束后执行', 'Loop tail: runs after the loop finishes');
+        }
+        if (f.name === '正常收尾') {
+          return pick(l, '正常收尾：没有抛异常时执行', 'Success path: runs when nothing was raised');
+        }
+        return pick(l, '否则：上面的条件不成立时执行', 'Else: runs when the condition is false');
+      }
+      if (/^finally\b/.test(firstLine)) {
+        return pick(l, '最终处理：成功或失败都会执行', 'Finally: runs either way');
+      }
+      const head = firstLine.replace(/:\s*$/, '');
+      return pick(l, `${name}：${short(head, 50)}`, `${name}: ${short(head, 50)}`);
+    }
     case 'call': {
       const args = f.callExpr ? callArgs(f.callExpr) : [];
       const name = f.name || '这个函数';
@@ -520,6 +582,7 @@ function titleFor(f: UnitFacts, l: Lang): string {
     case 'return': return pick(l, '返回', 'Return');
     case 'call': return f.name ? pick(l, `调用 ${f.name}`, `Call ${f.name}`) : pick(l, '执行语句', 'Statement');
     case 'comment': return pick(l, '说明', 'Note');
+    case 'block': return blockName(f.name, l);
     case 'statement': return pick(l, '语句', 'Statement');
     default: return pick(l, '语句', 'Statement');
   }

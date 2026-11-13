@@ -25,6 +25,7 @@ export type UnitKind =
   | 'for'            // 循环头部
   | 'return'         // 返回语句
   | 'call'           // 函数/方法调用语句
+  | 'block'          // 复合语句头部（try / with / while / match）
   | 'comment'        // 独立注释块
   | 'statement';     // 其它语句
 

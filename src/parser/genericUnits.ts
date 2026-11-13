@@ -410,6 +410,21 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
   const withComment = (facts: Omit<UnitFacts, 'kind'>, commentText?: string): Omit<UnitFacts, 'kind'> =>
     commentText ? { ...facts, comment: commentText } : facts;
 
+  // 复合语句的语句头：只占首行，体内语句交给 walk 拆分，
+  // 避免整段 try / catch 被当成一条「语句」塞进 L3/L4
+  const emitHeader = (kind: UnitKind, facts: Omit<UnitFacts, 'kind'>, node: SN, leadLine?: number, ctx: WalkCtx = MODULE): SemanticUnit => {
+    const line = nodeStartLine(node);
+    const unit: SemanticUnit = {
+      id: nextId(),
+      lines: [{ start: leadLine !== undefined ? Math.min(line, leadLine) : line, end: line }],
+      facts: { ...facts, kind },
+      containerId: ctx.l1,
+      blockId: ctx.block,
+    };
+    units.push(unit);
+    return unit;
+  };
+
   // ---- 文件头部说明（连续注释） ----
   let start = 0;
   const header: SN[] = [];
@@ -555,6 +570,23 @@ export function deriveGenericUnits(root: SN, lang: LanguageId): SemanticUnit[] {
       const unit = emit('for', withComment({ nodeType: t, condition, signature: headerText(node) }, commentText), lineStartNode, node, leadLine, ctx);
       unit.blockId = unit.id;
       walkBody(node, false, { l1: ctx.l1, block: unit.id });
+      return;
+    }
+
+    // try / catch / finally：头部单独成块，体内继续拆分
+    if (t === 'try_statement') {
+      const head = emitHeader('block', withComment({ nodeType: t, name: '异常处理', signature: headerText(node) }, commentText), lineStartNode, leadLine, ctx);
+      head.blockId = head.id;
+      walkBody(node, false, { l1: ctx.l1, block: head.id });
+      for (const clause of node.namedChildren) {
+        if (clause.type !== 'catch_clause' && clause.type !== 'finally_clause') {
+          continue;
+        }
+        const name = clause.type === 'catch_clause' ? '异常分支' : '最终处理';
+        const cu = emitHeader('block', { nodeType: clause.type, name, signature: headerText(clause) }, clause, undefined, ctx);
+        cu.blockId = cu.id;
+        walkBody(clause, false, { l1: ctx.l1, block: cu.id });
+      }
       return;
     }
 

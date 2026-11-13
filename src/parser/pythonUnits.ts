@@ -39,6 +39,21 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
     return unit;
   }
 
+  // 复合语句的语句头：只占首行，体内语句交给 walk 拆分，
+  // 避免整段（如 26 行的 try 块）被当成一条「语句」塞进 L3/L4
+  function emitHeader(kind: UnitKind, facts: Omit<UnitFacts, 'kind'>, node: SN, ctx: WalkCtx, leadLine?: number): SemanticUnit {
+    const line = nodeStartLine(node);
+    const unit: SemanticUnit = {
+      id: nextId(),
+      lines: [{ start: leadLine !== undefined ? Math.min(line, leadLine) : line, end: line }],
+      facts: { ...facts, kind },
+      containerId: ctx.l1,
+      blockId: ctx.block,
+    };
+    units.push(unit);
+    return unit;
+  }
+
   // 处理单个语句节点
   function emitStatement(node: SN, ctx: WalkCtx, leadLine?: number, commentText?: string): void {
     const t = node.type;
@@ -55,7 +70,7 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
     if (t === 'expression_statement') {
       const inner = node.namedChild(0);
       if (inner) {
-        if (inner.type === 'assignment') {
+        if (inner.type === 'assignment' || inner.type === 'augmented_assignment') {
           emitAssignment(inner, node, ctx, leadLine, commentText);
           return;
         }
@@ -124,7 +139,7 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
       unit.blockId = unit.id;
       const inner: WalkCtx = { l1: ctx.l1, block: unit.id };
       walkBody(node, inner);
-      walkAlt(field(node, 'alternative'), { ...inner, block: `${unit.id}:alt` });
+      walkAlt(field(node, 'alternative'), { l1: ctx.l1, block: `${unit.id}:alt` }, '否则');
       return;
     }
 
@@ -137,7 +152,50 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
       unit.blockId = unit.id;
       const inner: WalkCtx = { l1: ctx.l1, block: unit.id };
       walkBody(node, inner);
-      walkAlt(field(node, 'alternative'), { ...inner, block: `${unit.id}:alt` });
+      walkAlt(field(node, 'alternative'), { l1: ctx.l1, block: `${unit.id}:alt` }, '循环收尾');
+      return;
+    }
+
+    // 复合语句（try / with / while / match）：头部单独成块，体内继续拆分
+    if (t === 'try_statement' || t === 'with_statement' || t === 'while_statement' || t === 'match_statement') {
+      const label = t === 'try_statement' ? '异常处理'
+        : t === 'with_statement' ? '上下文管理'
+        : t === 'while_statement' ? '循环'
+        : '模式匹配';
+      const head = node.text.split('\n')[0].trim();
+      const unit = emitHeader('block', withComment({ nodeType: t, name: label, signature: head }), node, ctx, leadLine);
+      unit.blockId = unit.id;
+      const inner: WalkCtx = { l1: ctx.l1, block: unit.id };
+
+      if (t === 'try_statement') {
+        walkBody(node, inner);
+        // except / else / finally 各自成块，语句头同样只占一行
+        const clauses = node.namedChildren.filter(
+          (c) => c.type === 'except_clause' || c.type === 'else_clause' || c.type === 'finally_clause',
+        );
+        for (const clause of clauses) {
+          const name = clause.type === 'except_clause' ? '异常分支'
+            : clause.type === 'else_clause' ? '正常收尾'
+            : '最终处理';
+          const headLine = clause.text.split('\n')[0].trim();
+          const cu = emitHeader('block', { nodeType: clause.type, name, signature: headLine }, clause, inner);
+          cu.blockId = cu.id;
+          walkBody(clause, { l1: ctx.l1, block: cu.id });
+        }
+      } else if (t === 'match_statement') {
+        const body = field(node, 'body');
+        for (const clause of (body?.namedChildren ?? [])) {
+          if (clause.type !== 'case_clause') {
+            continue;
+          }
+          const cu = emitHeader('block', { nodeType: clause.type, name: '分支', signature: clause.text.split('\n')[0].trim() }, clause, inner);
+          cu.blockId = cu.id;
+          walkBody(clause, { l1: ctx.l1, block: cu.id });
+        }
+      } else {
+        walkBody(node, inner);
+        walkAlt(field(node, 'alternative'), { l1: ctx.l1, block: `${unit.id}:alt` }, '循环收尾');
+      }
       return;
     }
 
@@ -210,15 +268,18 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
     walk([...interiorComments, ...bodyChildren], ctx);
   }
 
-  function walkAlt(alt: SN | null, ctx: WalkCtx): void {
+  function walkAlt(alt: SN | null, ctx: WalkCtx, label: string): void {
     if (!alt) { return; }
-    if (alt.type === 'block') {
-      walk(alt.namedChildren, ctx);
+    // elif 链：当作独立分支处理
+    if (alt.type === 'if_statement') {
+      emitStatement(alt, ctx);
       return;
     }
-    if (alt.type === 'if_statement') {
-      // elif 链
-      emitStatement(alt, ctx);
+    // else 头部单独成块，体内继续拆分，避免整段 else 变成一条「语句」
+    if (alt.type === 'else_clause') {
+      const unit = emitHeader('block', { nodeType: alt.type, name: label, signature: alt.text.split('\n')[0].trim() }, alt, ctx);
+      unit.blockId = unit.id;
+      walkBody(alt, { l1: ctx.l1, block: unit.id });
       return;
     }
     walk(alt.namedChildren, ctx);

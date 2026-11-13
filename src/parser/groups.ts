@@ -57,6 +57,26 @@ const LABELS: Record<Lang, Labels> = {
   },
 };
 
+/** 复合语句块名（解析器内部用中文名，这里按语言翻译） */
+const BLOCK_TITLES: Record<string, [string, string]> = {
+  异常处理: ['异常处理', 'Error handling'],
+  异常分支: ['异常分支', 'Error branch'],
+  正常收尾: ['正常收尾', 'Success path'],
+  最终处理: ['最终处理', 'Finally'],
+  上下文管理: ['上下文管理', 'Context block'],
+  循环: ['循环', 'Loop'],
+  模式匹配: ['模式匹配', 'Match'],
+  分支: ['分支', 'Case'],
+};
+
+function blockTitleText(name: string | undefined, lang: Lang): string | undefined {
+  if (!name) {
+    return undefined;
+  }
+  const hit = BLOCK_TITLES[name];
+  return hit ? (lang === 'en' ? hit[1] : hit[0]) : name;
+}
+
 const isScope = (u: SemanticUnit): boolean => u.facts.kind === 'function' || u.facts.kind === 'class';
 
 /** 允许跨过的空行数：1 个空行仍算同一块，2 个以上拆开 */
@@ -182,7 +202,7 @@ export function buildExplainGroups(units: SemanticUnit[], lang: Lang = 'zh'): Ex
       }));
       const g: ExplainGroup = {
         id: `l2:${key}:${current[0]}`,
-        title: blockTitle(key, owner, labels, ranges, current.map((m) => units[m])),
+        title: blockTitle(key, owner, labels, ranges, current.map((m) => units[m]), lang),
         lines: ranges,
         unitIndexes: current,
       };
@@ -278,6 +298,7 @@ function blockTitle(
   labels: Labels,
   ranges: LineRange[],
   members: SemanticUnit[],
+  langHint: Lang,
 ): string {
   if (!owner) {
     return moduleTitle(members, labels);
@@ -295,6 +316,15 @@ function blockTitle(
       return `${labels.branch} · ${clip(owner.facts.condition ?? name)}`;
     case 'for':
       return `${labels.loop} · ${clip(owner.facts.condition ?? name)}`;
+    case 'block': {
+      const label = blockTitleText(owner.facts.name, langHint) ?? labels.block;
+      // 异常分支 / 模式匹配分支：把条件带到标题里，避免多个同名片段
+      if (owner.facts.name !== '异常分支' && owner.facts.name !== '分支') {
+        return label;
+      }
+      const head = (owner.facts.signature ?? '').replace(/^(except|catch|case)\b\s*/i, '').replace(/^\(\s*|\s*\)$/g, '').replace(/:\s*$/, '').trim();
+      return head ? `${label} · ${clip(head)}` : label;
+    }
     default:
       return `${labels.block} · L${ranges[0]?.start ?? 1}`;
   }
