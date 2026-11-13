@@ -1,7 +1,7 @@
 {
   "name": "codeladder",
   "displayName": "CodeLadder · Four-tier Code Reading",
-  "description": "CodeLadder turns Python, TypeScript, C, C++, Java, Rust and Go into four readable tiers — intent (L1), steps (L2), logic (L3) and code (L4) — so non-developers can climb from plain language down to the implementation, with project context and two-way highlighting.",
+  "description": "CodeLadder turns Python, TypeScript, C, C++, Java, Rust and Go into four readable tiers — intent (L1), steps (L2), logic (L3) and code (L4). Made for AI-assisted developers who ship code they can't fully read, and for anyone learning an unfamiliar codebase.",
   "version": "0.1.0",
   "publisher": "codeladder",
   "license": "MIT",
@@ -37,6 +37,8 @@
     "cpp",
     "learning",
     "education",
+    "vibe-coding",
+    "code-comprehension",
     "tree-sitter",
     "non-developer"
   ],

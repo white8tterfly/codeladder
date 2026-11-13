@@ -8,6 +8,13 @@ Works with **Python, TypeScript, C, C++, Java, Rust and Go**.
 
 ---
 
+## Who it's for
+
+- **AI-assisted developers who ship code they can't fully read.** Vibe coding gets you working software fast — CodeLadder lets you climb back into the black box you merged, tier by tier, and understand it before you touch it again.
+- **Anyone learning an unfamiliar codebase.** New hires, students, reviewers and maintainers can start from the file's intent and walk down to individual statements, without reading every line first.
+
+---
+
 ## Why CodeLadder?
 
 Most "explain this code" tools give you one long answer in a chat window, disconnected from the file. CodeLadder keeps the explanation and the code side by side, and lets you move between them in both directions.
