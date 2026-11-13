@@ -2,6 +2,15 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.6] - 2026-11-13
+
+### Fixed
+
+- `try` / `with` / `while` / `match` blocks were treated as one opaque statement, so a 26-line `try` block showed up as a single raw code card in L3 and L4. Each compound statement now emits a one-line header unit (`try:`, `except ValueError:`, `else:`, `finally:`, `case "add":`) and its body is split into normal units.
+- `else` branches were swallowed into a single statement unit, which also left the `else:` line uncovered. Else bodies now emit their own header and are walked like any other block.
+- `x += 1` was classified as a generic statement; augmented assignments now count as assignments.
+- Compound-block L2 titles now include the condition for error branches and `case` clauses (`异常分支 · FileNotFoundError`, `分支 · "add"`).
+
 ## [0.1.5] - 2026-11-13
 
 ### Fixed
