@@ -15,6 +15,7 @@ Works with **Python, TypeScript, C, C++, Java, Rust and Go**.
 ## Table of Contents
 
 - [Background](#background)
+- [Screenshots](#screenshots)
 - [Install](#install)
 - [Usage](#usage)
 - [The four tiers](#the-four-tiers)
@@ -42,6 +43,18 @@ Most "explain this code" tools return one long answer in a chat window, disconne
 - **Deterministic first.** Structure comes from the syntax tree, not from a model. AI is optional and only rewrites the wording.
 - **Click to jump, move to follow.** Click a block on the right to select the code on the left; move the cursor on the left to highlight the matching block.
 - **Bilingual.** Chinese and English, switchable at runtime.
+
+## Screenshots
+
+The panel follows your editor language; these were taken in Trae with the Chinese UI. The badge on every block says where it came from — **✓ deterministic** means it was read off the syntax tree, **⚠ AI-inferred** means a model wrote the wording.
+
+| Business context and L2 steps | L3 logic, with the code highlighted on the left |
+| --- | --- |
+| ![L2 steps](.screenshots/l2-steps.png) | ![L3 logic](.screenshots/l3-logic.png) |
+
+| L2 with business context | L4 code, blocks mapped to line ranges |
+| --- | --- |
+| ![Business context](.screenshots/l2-context.png) | ![L4 code](.screenshots/l4-code.png) |
 
 ## Install
 
@@ -75,7 +88,7 @@ trae-cn --install-extension codeladder-<version>.vsix
 4. Switch between **L1 Intent**, **L2 Steps**, **L3 Logic** and **L4 Code** in the panel tab bar.
 5. Click any explanation block to jump to and highlight its code. Move the cursor in the editor to see the matching block light up.
 
-If the IDE exposes a built-in model through the `vscode.lm` API — for example a Copilot Chat model — no key is needed. Otherwise point CodeLadder at an OpenAI-compatible endpoint:
+Point CodeLadder at an OpenAI-compatible endpoint, and that endpoint takes precedence over anything the IDE offers:
 
 ```json
 {
@@ -86,7 +99,7 @@ If the IDE exposes a built-in model through the `vscode.lm` API — for example 
 }
 ```
 
-The base URL is domain-level: CodeLadder appends `/chat/completions` itself. See [Settings](#settings) for every option.
+The base URL is domain-level: CodeLadder appends `/chat/completions` itself. See [Settings](#settings) for every option. With no `baseUrl`, `apiKey` and `model` at all, CodeLadder falls back to a model the IDE exposes through `vscode.lm` — a Copilot Chat model, for example — and needs no key.
 
 ### Commands
 
