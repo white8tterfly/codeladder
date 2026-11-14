@@ -13,7 +13,7 @@ import type { Lang } from './i18n';
 
 async function main(): Promise<void> {
   const demo = process.argv[2]
-    ?? path.join(__dirname, '..', '..', '0-min-checkpoint-reducer.py');
+    ?? path.join(__dirname, '..', 'test', 'fixtures', 'sample.py');
   const source = fs.readFileSync(demo, 'utf8');
   const dot = demo.lastIndexOf('.');
   const language = (process.argv[3] as LanguageId | undefined)

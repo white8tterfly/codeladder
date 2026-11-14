@@ -4,6 +4,7 @@
 src/**
 out/selftest.js
 .gitignore
+test/**
 tsconfig.json
 **/*.map
 *.vsix
