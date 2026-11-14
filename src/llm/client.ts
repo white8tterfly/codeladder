@@ -72,9 +72,12 @@ interface IdeChatModel {
 /** 同一请求在途时复用 Promise，防止连点/语言切换造成重复计费 */
 const inflight = new Map<string, Promise<LlmOutcome>>();
 
+/** IDE 注册多个模型时，按常见对话模型家族优先，避免随手取到不适合归纳的那个 */
+const IDE_FAMILY_PREFERENCE = ['gpt-4', 'gpt-3', 'claude', 'gemini', 'qwen', 'deepseek', 'llama'];
+
 /**
  * 取 IDE 已注册的对话模型（VS Code 1.90+ 的 vscode.lm）。
- * Trae / VS Code 自身不注册提供者时返回 undefined，由调用方回退到 HTTP 配置。
+ * 只在用户没有显式配置 baseUrl / apiKey / model 时才会走到这里。
  */
 async function pickIdeModel(): Promise<IdeChatModel | undefined> {
   const lm = (vscode as any).lm;
@@ -83,7 +86,14 @@ async function pickIdeModel(): Promise<IdeChatModel | undefined> {
   }
   try {
     const models = await lm.selectChatModels({});
-    return Array.isArray(models) && models.length > 0 ? (models[0] as IdeChatModel) : undefined;
+    if (!Array.isArray(models) || models.length === 0) {
+      return undefined;
+    }
+    const hit = models.find((m: IdeChatModel) => {
+      const key = `${m.family ?? ''} ${m.name ?? ''}`.toLowerCase();
+      return IDE_FAMILY_PREFERENCE.some((family) => key.includes(family));
+    });
+    return (hit ?? models[0]) as IdeChatModel;
   } catch {
     return undefined;
   }
@@ -194,28 +204,19 @@ async function runRequest(
   return merged;
 }
 
-/** 请求一批分组：优先 IDE 内置模型，失败再回退到自配端点 */
+/** 请求一批分组：显式配置的端点优先，没配置时才用 IDE 内置模型 */
 async function requestBatch(
   system: string,
   built: { prompt: string; l1Allowed: Set<number>; l2Allowed: Set<number> },
   needSummary: boolean,
 ): Promise<LlmOutcome> {
-  const ideModel = await pickIdeModel();
-  let ideFailure: LlmFailure | undefined;
-  if (ideModel) {
-    const viaIde = await requestViaIdeModel(ideModel, system, built.prompt, built.l1Allowed, built.l2Allowed, needSummary);
-    if (viaIde.ok) {
-      return viaIde;
-    }
-    ideFailure = viaIde;
-  }
-
   const config = readConfig();
   if (!config) {
-    if (ideFailure) {
-      return ideFailure;
+    const ideModel = await pickIdeModel();
+    if (!ideModel) {
+      return { ok: false, reason: 'no-model' };
     }
-    return { ok: false, reason: 'no-model' };
+    return requestViaIdeModel(ideModel, system, built.prompt, built.l1Allowed, built.l2Allowed, needSummary);
   }
 
   const controller = new AbortController();
@@ -244,7 +245,12 @@ async function requestBatch(
       } catch {
         // 忽略读取失败，保留状态码即可
       }
-      return { ok: false, reason: 'failed', detail: `HTTP ${res.status}${body ? ` · ${body}` : ''}` };
+      // 带上实际使用的端点与模型，模型名不匹配这类 400 才定位得到
+      return {
+        ok: false,
+        reason: 'failed',
+        detail: `${config.model} @ ${config.baseUrl} · HTTP ${res.status}${body ? ` · ${body}` : ''}`,
+      };
     }
     const data = JSON.parse(await res.text()) as { choices?: Array<{ message?: { content?: unknown } }> };
     const content = data.choices?.[0]?.message?.content;
