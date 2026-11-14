@@ -193,7 +193,7 @@ header{position:relative;z-index:1;flex:0 0 auto;display:flex;align-items:center
 
 /* ---- 四档阶梯 ---- */
 .tierbar{position:relative;z-index:1;flex:0 0 auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;padding:12px 20px 0}
-.tier-tab{position:relative;display:flex;flex-direction:column;gap:1px;padding:9px 11px 9px;font-family:inherit;text-align:left;cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow-1);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.tier-tab{position:relative;display:flex;flex-direction:column;gap:1px;padding:9px 11px 9px;font-family:inherit;color:var(--ink);text-align:left;cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow-1);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
 .tier-tab::after{content:'';position:absolute;left:11px;right:11px;top:-1px;height:2px;border-radius:2px;background:var(--tab);opacity:.18;transition:opacity .16s ease}
 .tier-tab:hover{transform:translateY(-1px);border-color:var(--line-strong)}
 .tier-tab.active{border-color:var(--tab);box-shadow:inset 0 0 0 1px var(--tab),var(--shadow-1)}
