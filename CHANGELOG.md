@@ -2,6 +2,12 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.7] - 2026-11-14
+
+### Fixed
+
+- The four tier cards (L1–L4) drew their names in the browser's default button colour, which is black in dark themes, so "intent / steps / logic / code" was unreadable on a dark background. The cards now inherit the theme ink colour.
+
 ## [0.1.6] - 2026-11-13
 
 ### Fixed
