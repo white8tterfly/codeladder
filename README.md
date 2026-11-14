@@ -48,7 +48,7 @@ Most "explain this code" tools return one long answer in a chat window, disconne
 | IDE | How to install |
 | --- | --- |
 | **VS Code** | Extensions view → search `CodeLadder`, or run the command below |
-| **Trae** | Extensions view → search `CodeLadder` (Trae's gallery reads Open VSX), or install the VSIX from the [latest release](https://github.com/white8tterfly/codeladder/releases/latest) |
+| **Trae** | Extensions view → search `CodeLadder`; if Trae's curated gallery does not list it yet, install the VSIX from the [latest release](https://github.com/white8tterfly/codeladder/releases/latest), or follow Trae's guide for installing an extension from the VS Code Marketplace |
 | **Qoder** | Extensions view → `...` → **Install from VSIX**, or run the VSIX command below |
 | **Other VS Code-compatible IDEs** | Download `codeladder-<version>.vsix` from the releases page and install it from the Extensions view |
 
