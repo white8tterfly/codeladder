@@ -2,6 +2,7 @@
 .vscode-test/**
 .github/**
 src/**
+out/selftest.js
 .gitignore
 tsconfig.json
 **/*.map
