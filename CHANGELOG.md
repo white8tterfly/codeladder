@@ -2,6 +2,17 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.8] - 2026-11-15
+
+### Changed
+
+- A configured endpoint (`codeLadder.llm.baseUrl`, `apiKey` and `model`) now takes precedence over a model the IDE exposes through `vscode.lm`. The IDE model is used only when none of the three is set, so a working configuration is no longer overridden by whatever model the editor happens to register.
+
+### Fixed
+
+- Failure details now name the model and base URL that were actually used. A gateway that only accepts its own model names answers with HTTP 400, and the panel used to hide that mismatch behind a bare status code.
+- When the IDE exposes several models, CodeLadder picks a common chat family instead of whichever model came first in the list.
+
 ## [0.1.7] - 2026-11-14
 
 ### Fixed
