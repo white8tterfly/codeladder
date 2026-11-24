@@ -194,12 +194,18 @@ export function buildExplainGroups(units: SemanticUnit[], lang: Lang = 'zh'): Ex
       if (current.length === 0) {
         return;
       }
-      const ranges = mergeRanges(current.flatMap((m) => {
+      const ownerHeaderFirst = current.length > 0 && units[current[0]].id === baseKey;
+      let ranges = mergeRanges(current.flatMap((m) => {
         const u = units[m];
         // 块首单元只取首行：C/Java/TS 的函数单元覆盖整个函数体，
         // 若整段计入会把分支/循环块重复包进来
         return isScope(u) && key === u.id ? [u.lines[0]] : u.lines;
       }));
+      // 块首与体内第一条语句之间只隔着空行 / 注释 / docstring 时，合并成一段连续行号，
+      // 避免「类体 · Foo」出现 L10、L14-L22 这样被空行切开的两个行号段
+      if (ownerHeaderFirst && ranges.length > 1) {
+        ranges = [{ start: ranges[0].start, end: ranges[ranges.length - 1].end }];
+      }
       const g: ExplainGroup = {
         id: `l2:${key}:${current[0]}`,
         title: blockTitle(key, owner, labels, ranges, current.map((m) => units[m]), lang),
@@ -216,7 +222,10 @@ export function buildExplainGroups(units: SemanticUnit[], lang: Lang = 'zh'): Ex
     for (const m of sorted) {
       const start = units[m].lines[0]?.start ?? 0;
       const end = units[m].lines.slice(-1)[0]?.end ?? 0;
-      if (current.length > 0 && start > maxEnd + GAP_TOLERANCE) {
+      // 块首（函数 / 类 / 分支头）与体内第一条语句之间不按空行拆块：
+      // 函数说明、docstring、注释常常和函数体隔着一个空行，拆开会让同一块被解释两次
+      const onlyHeader = current.length === 1 && units[current[0]].id === baseKey;
+      if (current.length > 0 && !onlyHeader && start > maxEnd + GAP_TOLERANCE) {
         flush();
       }
       current.push(m);

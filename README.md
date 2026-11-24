@@ -87,6 +87,11 @@ trae-cn --install-extension codeladder-<version>.vsix
 3. Run **CodeLadder: Generate Four Tiers** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), the editor title bar, or the editor right-click menu.
 4. Switch between **L1 Intent**, **L2 Steps**, **L3 Logic** and **L4 Code** in the panel tab bar.
 5. Click any explanation block to jump to and highlight its code. Move the cursor in the editor to see the matching block light up.
+6. Check the header for the token count of the current file, and click **Re-analyze** to ignore the cache and regenerate every L1 / L2 explanation.
+
+### Auto-refresh
+
+Set `codeLadder.autoRefresh.enabled` to `true` to re-run the analysis whenever you save the file shown in the panel. The run is debounced, reuses unchanged groups and sends only the changed ones to the model. The token counter keeps adding up across these runs, so it always shows what the current file has cost so far instead of dropping back to zero; open another file to reset it. Use `codeLadder.autoRefresh.globs` to limit auto-refresh to matching paths.
 
 Point CodeLadder at an OpenAI-compatible endpoint, and that endpoint takes precedence over anything the IDE offers:
 
@@ -157,6 +162,8 @@ The context card at the top of the panel summarizes this, so the explanation is 
 | `codeLadder.llm.apiKey` | empty | API key for the model endpoint |
 | `codeLadder.llm.model` | empty | Model name, e.g. `deepseek-chat` |
 | `codeLadder.llm.maxInputChars` | `24000` | Maximum code characters sent per request (minimum 2000); overflow is left for the next run |
+| `codeLadder.autoRefresh.enabled` | `false` | Re-run the analysis when the file shown in the panel is saved |
+| `codeLadder.autoRefresh.globs` | empty | Glob patterns that limit auto-refresh, e.g. `src/**/*.py`; empty applies to every supported file |
 
 The panel, tier names, project context and generated explanation all follow `codeLadder.language`. Changing the setting while the panel is open regenerates the current file in the new language.
 
@@ -191,6 +198,7 @@ The index is capped at 2000 files and 512 KB per file. Longer files are still ex
 - **Summary fingerprint.** The business context is regenerated only when the file's docstring, module facts, dependency facts or unit skeleton change, not on every internal edit.
 - **Budget.** Only the code for the requested groups is sent. `maxInputChars` caps the payload; groups that do not fit are left for the next run, and the status bar tells you how many were covered.
 - **Deduplicated.** Identical requests already in flight share one call, so double-clicks or a language switch do not double-bill.
+- **Visible cost.** The panel header shows the tokens used for the current file — input and output split in the tooltip — and keeps adding incremental auto-refresh runs to that total.
 - **Reset on config change.** Changing the model settings clears the cache, so old model output is never presented as new model output.
 
 ## Privacy

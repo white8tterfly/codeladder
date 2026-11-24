@@ -21,9 +21,14 @@ export class HighlightManager {
     });
   }
 
-  /** 高亮若干行区间 */
+  /** 悬停高亮若干行区间（只动悬停层，不影响点击后的 pin 高亮） */
   highlight(editor: vscode.TextEditor, ranges: LineRange[]): void {
     editor.setDecorations(this.hlType, this.toDecorationRanges(editor, ranges));
+  }
+
+  /** 悬停移出：只清悬停高亮，保留点击后 pin 的强高亮 */
+  clearHover(editor: vscode.TextEditor): void {
+    editor.setDecorations(this.hlType, []);
   }
 
   /** 点击解释块：把整块覆盖的所有行都强高亮（跨行块不再只亮第一行） */

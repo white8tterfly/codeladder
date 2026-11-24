@@ -9,5 +9,7 @@
   "config.llm.baseUrl.desc": "OpenAI 兼容接口地址，只填到域名层级，例如 `https://api.deepseek.com`。CodeLadder 会自动拼接 `/chat/completions`，不要再手写接口路径。优先使用 IDE 暴露的模型（`vscode.lm`）；拿不到模型时必须配置这里，因为业务背景与 L1/L2 只由模型生成。`baseUrl`、`apiKey`、`model` 需同时填写。",
   "config.llm.apiKey.desc": "模型接口的 API Key（明文保存，建议仅在个人设备使用）。",
   "config.llm.model.desc": "模型名称，如 `deepseek-chat`。",
-  "config.llm.maxInputChars.desc": "单次请求最多发送的代码字符数（默认 24000）。只会发送变化过的单元；超出预算的部分留到下一次运行继续补齐。"
+  "config.llm.maxInputChars.desc": "单次请求最多发送的代码字符数（默认 24000）。只会发送变化过的单元；超出预算的部分留到下一次运行继续补齐。",
+  "config.autoRefresh.enabled.desc": "保存文件后自动重新解析面板中正在展示的文件。默认关闭；只会把发生变化的单元送给模型。",
+  "config.autoRefresh.globs.desc": "自动重新解析生效的文件通配符（相对工作区根目录），例如 `src/**/*.py`。留空表示对所有受支持的文件生效。"
 }

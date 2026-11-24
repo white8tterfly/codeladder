@@ -11,6 +11,15 @@ import type { Lang } from '../i18n';
 import type { FileContext } from '../context/contextBuilder';
 import { hashText } from './analysisCache';
 
+/** 一次运行累计的 token 用量（多批请求相加） */
+export interface TokenUsage {
+  prompt: number;
+  completion: number;
+  total: number;
+  /** 端点没返回 usage（如 IDE 内置模型）时按字符估算 */
+  estimated?: boolean;
+}
+
 export interface LlmSuccess {
   ok: true;
   /** 本次是否重新生成了业务背景；未请求时为空字符串 */
@@ -18,6 +27,7 @@ export interface LlmSuccess {
   bullets: string[];
   l1: Record<number, string>;
   l2: Record<number, string>;
+  usage?: TokenUsage;
 }
 
 export interface LlmFailure {
@@ -36,6 +46,8 @@ export interface EnrichOptions {
   l2Targets?: number[];
   /** 是否重新生成业务背景；缺省为是 */
   needSummary?: boolean;
+  /** 每完成一批请求回调一次累计用量，便于界面实时显示消耗 */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 interface LlmConfig {
@@ -148,7 +160,17 @@ export function enrichWithLlm(
   if (running) {
     return running;
   }
-  const task = runRequest(source, groups, ctx, lang, l1Targets, l2Targets, needSummary, maxInputChars);
+  const task = runRequest(
+    source,
+    groups,
+    ctx,
+    lang,
+    l1Targets,
+    l2Targets,
+    needSummary,
+    maxInputChars,
+    options.onUsage,
+  );
   inflight.set(key, task);
   void task.then(
     () => inflight.delete(key),
@@ -166,6 +188,7 @@ async function runRequest(
   l2Targets: number[],
   needSummary: boolean,
   maxInputChars: number,
+  onUsage?: (usage: TokenUsage) => void,
 ): Promise<LlmOutcome> {
   // 分组数超过一次请求的预算时拆成多批，保证文件从头到尾都被解释，
   // 而不是只解释排在前面的那一半。
@@ -199,6 +222,17 @@ async function runRequest(
     }
     Object.assign(merged.l1, outcome.l1);
     Object.assign(merged.l2, outcome.l2);
+    if (outcome.usage) {
+      merged.usage = merged.usage
+        ? {
+            prompt: merged.usage.prompt + outcome.usage.prompt,
+            completion: merged.usage.completion + outcome.usage.completion,
+            total: merged.usage.total + outcome.usage.total,
+            estimated: merged.usage.estimated || outcome.usage.estimated,
+          }
+        : { ...outcome.usage };
+      onUsage?.(merged.usage);
+    }
   }
 
   return merged;
@@ -252,13 +286,20 @@ async function requestBatch(
         detail: `${config.model} @ ${config.baseUrl} · HTTP ${res.status}${body ? ` · ${body}` : ''}`,
       };
     }
-    const data = JSON.parse(await res.text()) as { choices?: Array<{ message?: { content?: unknown } }> };
+    const data = JSON.parse(await res.text()) as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    };
     const content = data.choices?.[0]?.message?.content;
     if (typeof content !== 'string') {
       return { ok: false, reason: 'failed', detail: 'empty response' };
     }
-    return parseResult(content, built.l1Allowed, built.l2Allowed, needSummary)
-      ?? { ok: false, reason: 'failed', detail: 'unparsable response' };
+    const parsed = parseResult(content, built.l1Allowed, built.l2Allowed, needSummary);
+    if (!parsed) {
+      return { ok: false, reason: 'failed', detail: 'unparsable response' };
+    }
+    parsed.usage = readUsage(data.usage) ?? estimateUsage(`${system}\n\n${built.prompt}`, content);
+    return parsed;
   } catch (err) {
     const detail = err instanceof Error
       ? (err.name === 'AbortError' ? 'request timeout' : err.message)
@@ -288,8 +329,13 @@ async function requestViaIdeModel(
     for await (const chunk of response.text) {
       text += chunk;
     }
-    return parseResult(text, l1Allowed, l2Allowed, needSummary)
-      ?? { ok: false, reason: 'failed', detail: 'unparsable response' };
+    const parsed = parseResult(text, l1Allowed, l2Allowed, needSummary);
+    if (!parsed) {
+      return { ok: false, reason: 'failed', detail: 'unparsable response' };
+    }
+    // IDE 内置模型不返回 usage，按字符粗略估算，界面上以 ≈ 标注
+    parsed.usage = estimateUsage(`${system}\n\n${prompt}`, text);
+    return parsed;
   } catch (err) {
     return {
       ok: false,
@@ -581,4 +627,38 @@ function parseResult(
 function clip(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+/** 端点返回的 usage；部分网关不给 total_tokens，用输入 + 输出补上 */
+function readUsage(
+  raw: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined,
+): TokenUsage | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const prompt = Number(raw.prompt_tokens) || 0;
+  const completion = Number(raw.completion_tokens) || 0;
+  const total = Number(raw.total_tokens) || prompt + completion;
+  if (!total) {
+    return undefined;
+  }
+  return { prompt, completion, total };
+}
+
+/** 粗略估算 token：中日韩字符约 1 字 1 token，其余约 4 字符 1 token */
+function estimateTokens(text: string): number {
+  const cjk = (text.match(/[\u3400-\u9fff\uf900-\ufaff]/g) ?? []).length;
+  return cjk + Math.ceil((text.length - cjk) / 4);
+}
+
+/** 端点未返回 usage 时的兜底估算，estimated 标记让界面显示 ≈ */
+function estimateUsage(prompt: string, completion: string): TokenUsage {
+  const promptTokens = estimateTokens(prompt);
+  const completionTokens = estimateTokens(completion);
+  return {
+    prompt: promptTokens,
+    completion: completionTokens,
+    total: promptTokens + completionTokens,
+    estimated: true,
+  };
 }

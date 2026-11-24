@@ -25,6 +25,13 @@ export interface UiText {
   legendOk: string;
   legendAi: string;
   hint: string;
+  /** token 用量徽标 */
+  tokenUnit: string;
+  tokenTip: string;
+  tokenInput: string;
+  tokenOutput: string;
+  tokenEstimated: string;
+  tokenCached: string;
   contextTitle: string;
   techTitle: string;
   contextBasis: string;
@@ -43,6 +50,8 @@ export interface UiText {
   llmLoadingBody: string;
   btnConfigure: string;
   btnRetry: string;
+  btnReparse: string;
+  btnReparseTip: string;
   msgNoModel: string;
   msgLlmFailed: (detail: string) => string;
   empty: string;
@@ -68,6 +77,12 @@ const ZH: UiText = {
   legendOk: '✓ 确定性（AST 推导）',
   legendAi: '⚠ AI 归纳（需模型）',
   hint: 'L1→L4 颜色由浅到深（越深越接近真实代码） · 点击解释块跳转并高亮整块 · 点行号徽章定位单行',
+  tokenUnit: 'tokens',
+  tokenTip: '本次分析消耗',
+  tokenInput: '输入',
+  tokenOutput: '输出',
+  tokenEstimated: '按字符估算',
+  tokenCached: '本次未调用模型（复用缓存）',
   contextTitle: '业务背景',
   techTitle: '技术背景',
   contextBasis: '依据：',
@@ -85,6 +100,8 @@ const ZH: UiText = {
   llmLoadingBody: '结构与行号已就绪，业务背景与 L1 / L2 正在生成。',
   btnConfigure: '配置模型',
   btnRetry: '重试',
+  btnReparse: '重新解析',
+  btnReparseTip: '忽略缓存重新解析当前文件，并重新生成全部解释',
   msgNoModel: 'CodeLadder：业务背景与 L1 / L2 需要接入模型后才能生成。',
   msgLlmFailed: (detail) => `CodeLadder：模型调用失败${detail ? `（${detail}）` : ''}。`,
   empty: '在受支持的文件里运行「CodeLadder：生成四档解释」',
@@ -115,6 +132,12 @@ const EN: UiText = {
   legendOk: '✓ Deterministic (from AST)',
   legendAi: '⚠ AI-written (needs a model)',
   hint: 'L1→L4 colors get darker as you approach real code · Click a block to jump and highlight it · Click a line badge to jump to that line',
+  tokenUnit: 'tokens',
+  tokenTip: 'Tokens used this run',
+  tokenInput: 'Input',
+  tokenOutput: 'Output',
+  tokenEstimated: 'estimated from characters',
+  tokenCached: 'No model call this run (reused cache)',
   contextTitle: 'Business context',
   techTitle: 'Technical context',
   contextBasis: 'Based on: ',
@@ -132,6 +155,8 @@ const EN: UiText = {
   llmLoadingBody: 'Structure and line numbers are ready; business context and L1 / L2 are being written.',
   btnConfigure: 'Configure model',
   btnRetry: 'Retry',
+  btnReparse: 'Re-analyze',
+  btnReparseTip: 'Ignore the cache, re-parse this file and regenerate every explanation',
   msgNoModel: 'CodeLadder: business context and L1 / L2 require a model. Configure one to generate them.',
   msgLlmFailed: (detail) => `CodeLadder: model request failed${detail ? ` (${detail})` : ''}.`,
   empty: 'Open a supported file and run "CodeLadder: Generate Four Tiers"',

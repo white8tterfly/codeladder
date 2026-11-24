@@ -9,5 +9,7 @@
   "config.llm.baseUrl.desc": "OpenAI-compatible API base URL, domain level only — e.g. `https://api.deepseek.com`. CodeLadder appends `/chat/completions` itself, so do not include the endpoint path. A model exposed by the IDE (`vscode.lm`) is preferred; when none is available this endpoint is required, because the business context and the L1/L2 tiers are generated only by a model. Set `baseUrl`, `apiKey` and `model` together.",
   "config.llm.apiKey.desc": "API key for the model endpoint (stored in plain text; recommended for personal devices only).",
   "config.llm.model.desc": "Model name, e.g. `deepseek-chat`.",
-  "config.llm.maxInputChars.desc": "Maximum characters of code sent per request (default 24000). Only changed units are sent; when the budget is exceeded the remaining units are left for the next run."
+  "config.llm.maxInputChars.desc": "Maximum characters of code sent per request (default 24000). Only changed units are sent; when the budget is exceeded the remaining units are left for the next run.",
+  "config.autoRefresh.enabled.desc": "Re-analyze the file shown in the panel automatically after it is saved. Off by default. Only changed groups are sent to the model.",
+  "config.autoRefresh.globs.desc": "Glob patterns of files that auto-refresh applies to, relative to the workspace folder — e.g. `src/**/*.py`. Leave empty to apply to every supported file."
 }

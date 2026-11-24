@@ -12,7 +12,7 @@ import { ExplainPanel } from './ui/panel';
 import { ProjectIndex } from './index/projectIndex';
 import { buildFileContext } from './context/contextBuilder';
 import { enrichWithLlm } from './llm/client';
-import type { LlmOutcome } from './llm/client';
+import type { LlmOutcome, TokenUsage } from './llm/client';
 import { AnalysisCache, groupTextKey, planAnalysis } from './llm/analysisCache';
 import { buildExplainGroups } from './parser/groups';
 import { getLang, uiText } from './i18n';
@@ -22,13 +22,27 @@ let highlight: HighlightManager | undefined;
 let currentUnits: SemanticUnit[] = [];
 let currentDocUri: vscode.Uri | undefined;
 let explainToken = 0;
+/** 当前文件的累计 token 用量：自动重新解析只补变化分组，用量应叠加而不是归零 */
+let sessionUsage: TokenUsage | null = null;
+let sessionUsageDoc: string | undefined;
 const projectIndex = new ProjectIndex();
 /** 语义层结果缓存：未改动的单元不重复送给模型 */
 const analysisCache = new AnalysisCache();
+/** 缓存写入 workspaceState：重载窗口或升级扩展后仍然命中，不必整份重新解析 */
+const ANALYSIS_CACHE_KEY = 'codeLadder.analysisCache';
+let saveAnalysisCache = (): void => {};
+/** 保存后自动重新解析的防抖计时器（一次保存可能连续触发多次事件） */
+const AUTO_REFRESH_DELAY_MS = 400;
+let autoRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   panel = new ExplainPanel(context.extensionUri);
   highlight = new HighlightManager();
+
+  analysisCache.load(context.workspaceState.get(ANALYSIS_CACHE_KEY), modelFingerprint());
+  saveAnalysisCache = (): void => {
+    void context.workspaceState.update(ANALYSIS_CACHE_KEY, analysisCache.serialize(modelFingerprint()));
+  };
 
   // 注意：focus 落在 Webview 面板上时，window.activeTextEditor 会变成 undefined，
   // 因此不能依赖 activeTextEditor，必须按被解释文件的 URI 去找对应编辑器。
@@ -47,7 +61,8 @@ export function activate(context: vscode.ExtensionContext): void {
       case 'unfocus': {
         const editor = visibleTargetEditor();
         if (editor) {
-          highlight.clear(editor);
+          // 只清悬停高亮：跳转后面板会自动滚动，鼠标穿过其他块时不能把点击产生的 pin 高亮一起清掉
+          highlight.clearHover(editor);
         }
         break;
       }
@@ -71,6 +86,15 @@ export function activate(context: vscode.ExtensionContext): void {
         await runExplain(visibleTargetEditor());
         break;
       }
+      case 'reparse': {
+        panel?.setBusy(true);
+        try {
+          await runExplain(visibleTargetEditor(), true);
+        } finally {
+          panel?.setBusy(false);
+        }
+        break;
+      }
       default:
         break;
     }
@@ -92,6 +116,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('codeLadder.llm')) {
         analysisCache.clear();
+        saveAnalysisCache();
       }
       if (!e.affectsConfiguration('codeLadder.language')) {
         return;
@@ -108,6 +133,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidSaveTextDocument((doc) => {
       if (fromVscodeLanguageId(doc.languageId)) {
         void projectIndex.update(doc.uri);
+        scheduleAutoRefresh(doc);
       }
     }),
     vscode.window.onDidChangeTextEditorSelection((e) => {
@@ -120,7 +146,27 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
+  if (autoRefreshTimer) {
+    clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = undefined;
+  }
   highlight?.dispose();
+}
+
+/** 叠加两次用量；没有增量时保留原值，避免把已有数字刷成 0 */
+function addUsage(base: TokenUsage | null, delta: TokenUsage | null | undefined): TokenUsage | null {
+  if (!delta) {
+    return base;
+  }
+  if (!base) {
+    return { ...delta };
+  }
+  return {
+    prompt: base.prompt + delta.prompt,
+    completion: base.completion + delta.completion,
+    total: base.total + delta.total,
+    estimated: Boolean(base.estimated || delta.estimated),
+  };
 }
 
 /** 按 URI 找当前被解释文件的可见编辑器（不打开新编辑器） */
@@ -149,7 +195,8 @@ async function revealTargetEditor(): Promise<vscode.TextEditor | undefined> {
   return vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.One });
 }
 
-async function runExplain(target?: vscode.TextEditor): Promise<void> {
+/** 手动「重新解析」时 force=true：跳过缓存，全部重新送给模型 */
+async function runExplain(target?: vscode.TextEditor, force = false): Promise<void> {
   const lang = getLang();
   const ui = uiText(lang);
   const editor = target ?? vscode.window.activeTextEditor;
@@ -172,6 +219,14 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
       parsed.tree.delete();
     }
     currentDocUri = editor.document.uri;
+    // 换文件才重置累计用量；同一文件的自动重新解析要叠加
+    const docKey = editor.document.uri.toString();
+    if (sessionUsageDoc !== docKey) {
+      sessionUsage = null;
+      sessionUsageDoc = docKey;
+    }
+    // 重新生成解释时清掉上一轮留下的 pin 高亮，避免旧行号继续高亮
+    highlight?.clear(editor);
     const token = ++explainToken;
 
     if (currentUnits.length === 0) {
@@ -194,6 +249,7 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
       tech: ctx.tech,
     };
     panel?.render(payload, ui);
+    panel?.setUsage(sessionUsage);
 
     // 初始聚焦当前光标所在行对应的语义单元
     const line = editor.selection.active.line + 1;
@@ -204,7 +260,7 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
     const l1Keys = groups.l1.map((g) => groupTextKey(sourceLines, g));
     const l2Keys = groups.l2.map((g) => groupTextKey(sourceLines, g));
     const cacheKey = `${editor.document.uri.toString()}|${lang}`;
-    const cached = analysisCache.get(cacheKey);
+    const cached = force ? undefined : analysisCache.get(cacheKey);
     const { reusedL1, reusedL2, targetsL1, targetsL2, summaryKey, needSummary } = planAnalysis(cached, l1Keys, l2Keys, ctx, currentUnits);
     const totalGroups = groups.l1.length + groups.l2.length;
     const changedGroups = targetsL1.length + targetsL2.length;
@@ -235,6 +291,7 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
         tech: ctx.tech,
       };
       panel?.render(payload, ui);
+      panel?.setUsage(sessionUsage);
       panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
       vscode.window.setStatusBarMessage(ui.statusLlmCached, 4000);
       return;
@@ -245,8 +302,21 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
       : ui.statusLlm;
     const status = vscode.window.setStatusBarMessage(statusText);
     let outcome: LlmOutcome;
+    const baseUsage = sessionUsage;
+    let runUsage: TokenUsage | null = null;
     try {
-      outcome = await enrichWithLlm(parsed.source, groups, ctx, lang, { l1Targets: targetsL1, l2Targets: targetsL2, needSummary });
+      outcome = await enrichWithLlm(parsed.source, groups, ctx, lang, {
+        l1Targets: targetsL1,
+        l2Targets: targetsL2,
+        needSummary,
+        // 每批返回后刷新面板上的 token 用量，分析过程中就能看到消耗
+        onUsage: (usage) => {
+          runUsage = usage;
+          if (token === explainToken) {
+            panel?.setUsage(addUsage(baseUsage, usage));
+          }
+        },
+      });
     } finally {
       status.dispose();
     }
@@ -260,6 +330,8 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
         error: outcome.detail,
       };
       panel?.render(payload, ui);
+      sessionUsage = addUsage(baseUsage, runUsage);
+      panel?.setUsage(sessionUsage);
       panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
       const text = outcome.reason === 'no-model' ? ui.msgNoModel : ui.msgLlmFailed(outcome.detail ?? '');
       const action = await vscode.window.showWarningMessage(text, ui.btnConfigure, ui.btnRetry);
@@ -295,6 +367,7 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
 
     applyLlmResult(payload, { l1: mergedL1, l2: mergedL2 });
     analysisCache.set(cacheKey, { summary, bullets, summaryKey, l1: cachedL1, l2: cachedL2 });
+    saveAnalysisCache();
     payload.context = {
       summary,
       bullets,
@@ -304,6 +377,8 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
       tech: ctx.tech,
     };
     panel?.render(payload, ui);
+    sessionUsage = addUsage(baseUsage, outcome.usage ?? runUsage);
+    panel?.setUsage(sessionUsage);
     panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
 
     // 超出字符预算的分组没有送给模型；下次运行会自动只补这些分组
@@ -314,6 +389,59 @@ async function runExplain(target?: vscode.TextEditor): Promise<void> {
   } catch (err) {
     vscode.window.showErrorMessage(`${ui.errPrefix}${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/**
+ * 保存后自动重新解析：默认关闭；开启后只处理面板当前展示的文件，
+ * 配置了通配符时还必须命中其中之一。未配置通配符则对所有受支持文件生效。
+ */
+function scheduleAutoRefresh(doc: vscode.TextDocument): void {
+  if (!panel?.visible || doc.uri.toString() !== currentDocUri?.toString()) {
+    return;
+  }
+  if (!autoRefreshEnabled(doc)) {
+    return;
+  }
+  if (autoRefreshTimer) {
+    clearTimeout(autoRefreshTimer);
+  }
+  autoRefreshTimer = setTimeout(() => {
+    autoRefreshTimer = undefined;
+    if (!panel?.visible || doc.uri.toString() !== currentDocUri?.toString()) {
+      return;
+    }
+    const editor = visibleTargetEditor();
+    if (editor) {
+      void runExplain(editor);
+    }
+  }, AUTO_REFRESH_DELAY_MS);
+}
+
+function autoRefreshEnabled(doc: vscode.TextDocument): boolean {
+  const conf = vscode.workspace.getConfiguration('codeLadder.autoRefresh');
+  if (!conf.get<boolean>('enabled')) {
+    return false;
+  }
+  const globs = (conf.get<string[]>('globs') ?? [])
+    .map((g) => g.trim())
+    .filter((g) => g.length > 0);
+  if (globs.length === 0) {
+    return true;
+  }
+  return vscode.languages.match(globs.map((pattern) => ({ scheme: 'file', pattern })), doc) > 0;
+}
+
+/** 当前模型配置指纹：端点 / 模型变了，持久化缓存整体作废 */
+function modelFingerprint(): string {
+  const read = (key: string): string => {
+    const value = vscode.workspace.getConfiguration('codeLadder.llm').get<string>(key);
+    if (value && value.trim()) {
+      return value.trim();
+    }
+    return (vscode.workspace.getConfiguration('codeReadable.llm').get<string>(key) ?? '').trim();
+  };
+  const baseUrl = read('baseUrl');
+  return baseUrl ? `${baseUrl}#${read('model')}` : 'ide';
 }
 
 /** 打开 CodeLadder 的模型设置页 */

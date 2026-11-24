@@ -26,6 +26,22 @@ export interface AnalysisPlan {
 }
 
 const MAX_FILES = 12;
+/** 持久化结构版本：分组规则变化时递增，旧数据直接丢弃 */
+const STORAGE_VERSION = 2;
+
+interface StoredFile {
+  summary: string;
+  bullets: string[];
+  summaryKey: string;
+  l1: Array<[string, string]>;
+  l2: Array<[string, string]>;
+}
+
+export interface StoredAnalysisCache {
+  version: number;
+  modelKey: string;
+  files: Array<[string, StoredFile]>;
+}
 
 export class AnalysisCache {
   private files = new Map<string, CachedAnalysis>();
@@ -55,6 +71,64 @@ export class AnalysisCache {
   clear(): void {
     this.files.clear();
   }
+
+  /** 删除单个文件的缓存（手动重新解析时用） */
+  delete(key: string): void {
+    this.files.delete(key);
+  }
+
+  /** 导出成纯 JSON，可写入 workspaceState 跨窗口重载 / 扩展升级保留 */
+  serialize(modelKey: string): StoredAnalysisCache {
+    return {
+      version: STORAGE_VERSION,
+      modelKey,
+      files: [...this.files].map(([key, v]): [string, StoredFile] => [key, {
+        summary: v.summary,
+        bullets: v.bullets,
+        summaryKey: v.summaryKey,
+        l1: [...v.l1],
+        l2: [...v.l2],
+      }]),
+    };
+  }
+
+  /** 从 workspaceState 恢复；结构版本或模型配置不一致时整体丢弃，避免旧模型输出被当成新结果 */
+  load(raw: unknown, modelKey: string): void {
+    const data = raw as StoredAnalysisCache | undefined;
+    if (!data || data.version !== STORAGE_VERSION || data.modelKey !== modelKey || !Array.isArray(data.files)) {
+      return;
+    }
+    this.files.clear();
+    for (const entry of data.files) {
+      if (!Array.isArray(entry) || entry.length !== 2) {
+        continue;
+      }
+      const [key, value] = entry as [string, StoredFile];
+      if (typeof key !== 'string' || !key || !value) {
+        continue;
+      }
+      this.files.set(key, {
+        summary: typeof value.summary === 'string' ? value.summary : '',
+        bullets: Array.isArray(value.bullets) ? value.bullets.filter((b): b is string => typeof b === 'string') : [],
+        summaryKey: typeof value.summaryKey === 'string' ? value.summaryKey : '',
+        l1: toTextMap(value.l1),
+        l2: toTextMap(value.l2),
+      });
+    }
+  }
+}
+
+function toTextMap(pairs: unknown): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!Array.isArray(pairs)) {
+    return map;
+  }
+  for (const pair of pairs) {
+    if (Array.isArray(pair) && pair.length === 2 && typeof pair[0] === 'string' && typeof pair[1] === 'string') {
+      map.set(pair[0], pair[1]);
+    }
+  }
+  return map;
 }
 
 export function planAnalysis(

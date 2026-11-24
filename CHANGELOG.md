@@ -2,6 +2,26 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.9] - 2026-11-24
+
+### Added
+
+- The panel header now shows how many tokens the current analysis used, with the input / output split in the tooltip. The counter updates after each batch, uses the endpoint's `usage` when it is returned, and is prefixed with `≈` when it has to be estimated from characters (for example with the IDE's built-in model).
+- A **Re-analyze** button in the panel header. It ignores the cache, re-parses the current file and regenerates every L1 / L2 explanation; the button is disabled and spins while the run is in progress.
+- `codeLadder.autoRefresh.enabled` (default `false`) and `codeLadder.autoRefresh.globs`. When enabled, saving the file currently shown in the panel re-runs the analysis after a short debounce and sends only the changed groups to the model. `globs` limits auto-refresh to matching files (e.g. `src/**/*.py`); leave it empty to apply to every supported file.
+
+### Changed
+
+- Generated explanations are now persisted in workspace state and restored when the extension activates, so reloading the window or upgrading the extension no longer sends the whole file to the model again. The persisted cache is discarded when the configured endpoint or model changes.
+- Reading text in the panel is larger, with 15px body copy, 1.8 line height and roomier spacing. When `霞鹜文楷 屏幕阅读版` / `LXGW WenKai Screen` is installed, explanations use it as the reading face, falling back to Noto Sans SC and Microsoft YaHei; titles, tabs, badges and code keep a sans or mono face.
+
+### Fixed
+
+- With auto-refresh on, re-analysis reset the header token count to 0, or to the tokens of the last incremental run. The counter now accumulates the original total plus each incremental run for the current file, and resets only when you open another file. Cache hits no longer overwrite an existing total with 0.
+- Clicking an explanation block now jumps to the code and pins the highlight in a single click. The panel's auto-scroll used to move the pointer across other blocks, which cleared the just-applied highlight.
+- The four tier cards keep their description line in the two-column narrow layout instead of hiding it.
+- A class or function whose docstring / description is separated from the body by blank lines is no longer split into two explanation blocks. The block header and its first body statement now stay in the same L2 group, and the block's line range covers the blank lines, comments and docstring in between so it reads as one contiguous block.
+
 ## [0.1.8] - 2026-11-15
 
 ### Changed
