@@ -23,4 +23,12 @@ jobs:
 
       - run: npm ci
 
-      - run: npx @vscode/vsce publish --oidc
+      # 只打包一次，两个市场发布同一个文件，避免二次构建产生差异
+      - name: Package extension
+        run: npx @vscode/vsce package -o extension.vsix
+
+      - name: Publish to VS Code Marketplace
+        run: npx @vscode/vsce publish --oidc --packagePath extension.vsix
+
+      - name: Publish to Open VSX
+        run: npx ovsx publish extension.vsix -p "${{ secrets.OVSX_TOKEN }}"
