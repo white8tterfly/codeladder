@@ -6,6 +6,7 @@ import { ensureParser, parseSource } from './parser/tree';
 import { deriveSemanticUnits } from './parser/semantic';
 import { fromVscodeLanguageId } from './lang/languages';
 import { applyLlmResult, buildProjection, unitsCoveringLine } from './projector/projector';
+import type { ProjectionPayload } from './projector/projector';
 import type { SemanticUnit } from './model/types';
 import { HighlightManager } from './highlight/decorator';
 import { ExplainPanel } from './ui/panel';
@@ -13,9 +14,10 @@ import { ProjectIndex } from './index/projectIndex';
 import { buildFileContext } from './context/contextBuilder';
 import { enrichWithLlm } from './llm/client';
 import type { LlmOutcome, TokenUsage } from './llm/client';
-import { AnalysisCache, groupTextKey, planAnalysis } from './llm/analysisCache';
+import { AnalysisCache, groupTextKey, hashText, planAnalysis } from './llm/analysisCache';
 import { buildExplainGroups } from './parser/groups';
 import { getLang, uiText } from './i18n';
+import type { Lang } from './i18n';
 
 let panel: ExplainPanel | undefined;
 let highlight: HighlightManager | undefined;
@@ -31,6 +33,21 @@ const analysisCache = new AnalysisCache();
 /** 缓存写入 workspaceState：重载窗口或升级扩展后仍然命中，不必整份重新解析 */
 const ANALYSIS_CACHE_KEY = 'codeLadder.analysisCache';
 let saveAnalysisCache = (): void => {};
+
+/** 最近一次成功展示的面板内容：重载窗口后原样还原，不触发任何模型调用 */
+const LAST_VIEW_KEY = 'codeLadder.lastView';
+
+interface StoredView {
+  uri: string;
+  lang: Lang;
+  /** 分析时的文件内容指纹；文件改过就不还原旧内容 */
+  hash: string;
+  line: number;
+  payload: ProjectionPayload;
+  usage: TokenUsage | null;
+}
+
+let saveLastView = (_view: StoredView): void => {};
 /** 保存后自动重新解析的防抖计时器（一次保存可能连续触发多次事件） */
 const AUTO_REFRESH_DELAY_MS = 400;
 let autoRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -43,6 +60,56 @@ export function activate(context: vscode.ExtensionContext): void {
   saveAnalysisCache = (): void => {
     void context.workspaceState.update(ANALYSIS_CACHE_KEY, analysisCache.serialize(modelFingerprint()));
   };
+  saveLastView = (view): void => {
+    void context.workspaceState.update(LAST_VIEW_KEY, view);
+  };
+
+  // 窗口重载后 VS Code 会恢复此前打开的面板；这里直接把上次的分析结果灌回去，
+  // 既不重新解析也不调用模型（文件内容改过则放弃还原，交由用户重新触发）。
+  context.subscriptions.push(vscode.window.registerWebviewPanelSerializer(ExplainPanel.viewType, {
+    deserializeWebviewPanel: async (webviewPanel) => {
+      const stored = context.workspaceState.get<StoredView>(LAST_VIEW_KEY);
+      const currentPanel = panel;
+      if (!stored || !currentPanel) {
+        webviewPanel.dispose();
+        return;
+      }
+      let doc: vscode.TextDocument | undefined;
+      try {
+        doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === stored.uri)
+          ?? await vscode.workspace.openTextDocument(vscode.Uri.parse(stored.uri));
+      } catch {
+        doc = undefined;
+      }
+      if (!doc || hashText(doc.getText()) !== stored.hash) {
+        webviewPanel.dispose();
+        return;
+      }
+      currentDocUri = doc.uri;
+      sessionUsage = stored.usage;
+      sessionUsageDoc = stored.uri;
+      currentPanel.adopt(webviewPanel);
+      currentPanel.render(stored.payload, uiText(stored.lang));
+      currentPanel.setUsage(stored.usage);
+      // 重建行号到语义单元的映射，让光标联动继续可用；纯本地计算，不碰模型
+      const languageId = fromVscodeLanguageId(doc.languageId);
+      if (!languageId) {
+        return;
+      }
+      try {
+        await ensureParser(languageId);
+        const parsed = parseSource(languageId, doc.getText());
+        try {
+          currentUnits = deriveSemanticUnits(parsed.root, languageId);
+        } finally {
+          parsed.tree.delete();
+        }
+        currentPanel.focusBlocks(unitsCoveringLine(currentUnits, stored.line));
+      } catch {
+        // 还原失败只影响光标联动，面板内容不受影响
+      }
+    },
+  }));
 
   // 注意：focus 落在 Webview 面板上时，window.activeTextEditor 会变成 undefined，
   // 因此不能依赖 activeTextEditor，必须按被解释文件的 URI 去找对应编辑器。
@@ -298,6 +365,7 @@ async function runExplain(target?: vscode.TextEditor, force = false): Promise<vo
       panel?.render(payload, ui);
       panel?.setUsage(sessionUsage);
       panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
+      saveLastView({ uri: docKey, lang, hash: hashText(parsed.source), line, payload, usage: sessionUsage });
       vscode.window.setStatusBarMessage(ui.statusLlmCached, 4000);
       return;
     }
@@ -385,6 +453,7 @@ async function runExplain(target?: vscode.TextEditor, force = false): Promise<vo
     sessionUsage = addUsage(baseUsage, outcome.usage ?? runUsage);
     panel?.setUsage(sessionUsage);
     panel?.focusBlocks(unitsCoveringLine(currentUnits, line));
+    saveLastView({ uri: docKey, lang, hash: hashText(parsed.source), line, payload, usage: sessionUsage });
 
     // 超出字符预算的分组没有送给模型；下次运行会自动只补这些分组
     const covered = Object.keys(outcome.l1).length + Object.keys(outcome.l2).length;

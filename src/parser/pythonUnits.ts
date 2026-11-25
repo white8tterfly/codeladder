@@ -262,7 +262,10 @@ export function derivePythonUnits(root: SN): SemanticUnit[] {
 
   // 函数 / 类 / 条件 / 循环的「体」：体内部直接挂在定义节点下的注释，视为体首语句的前导注释
   function walkBody(defNode: SN, ctx: WalkCtx): void {
-    const body = field(defNode, 'body') ?? field(defNode, 'consequence');
+    // except / finally 子句在语法树里没有 body 字段，函数体是无字段的 block 子节点
+    const body = field(defNode, 'body')
+      ?? field(defNode, 'consequence')
+      ?? defNode.namedChildren.find((c) => c.type === 'block');
     const interiorComments: SN[] = defNode.namedChildren.filter((c) => c.type === 'comment');
     const bodyChildren: SN[] = body ? body.namedChildren : [];
     walk([...interiorComments, ...bodyChildren], ctx);

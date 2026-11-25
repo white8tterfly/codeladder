@@ -12,6 +12,9 @@ export class ExplainPanel {
   private panel: vscode.WebviewPanel | undefined;
   private handler: ((msg: any) => void) | undefined;
   private ui: UiText = uiText('zh');
+  /** Webview 脚本就绪前先排队，避免重载还原时首条 render 消息被丢弃 */
+  private ready = false;
+  private pending: unknown[] = [];
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
@@ -24,7 +27,7 @@ export class ExplainPanel {
     this.ui = ui;
     if (this.panel) {
       this.panel.title = ui.windowTitle;
-      this.panel.webview.postMessage({ type: 'ui', ui });
+      this.post({ type: 'ui', ui });
     }
   }
 
@@ -33,7 +36,7 @@ export class ExplainPanel {
       this.panel.reveal(vscode.ViewColumn.Beside);
       return;
     }
-    this.panel = vscode.window.createWebviewPanel(
+    this.attach(vscode.window.createWebviewPanel(
       ExplainPanel.viewType,
       this.ui.windowTitle,
       vscode.ViewColumn.Beside,
@@ -42,10 +45,51 @@ export class ExplainPanel {
         retainContextWhenHidden: true,
         localResourceRoots: [],
       },
-    );
-    this.panel.webview.html = this.getHtml();
-    this.panel.webview.onDidReceiveMessage((msg) => this.handler?.(msg));
-    this.panel.onDidDispose(() => { this.panel = undefined; }, null, []);
+    ));
+  }
+
+  /** 窗口重载后接管 VS Code 恢复出来的面板，内容由扩展重新灌入 */
+  public adopt(webviewPanel: vscode.WebviewPanel): void {
+    const prev = this.panel;
+    this.panel = undefined;
+    prev?.dispose();
+    this.attach(webviewPanel);
+  }
+
+  private attach(webviewPanel: vscode.WebviewPanel): void {
+    this.panel = webviewPanel;
+    this.ready = false;
+    this.pending = [];
+    webviewPanel.title = this.ui.windowTitle;
+    webviewPanel.webview.html = this.getHtml();
+    webviewPanel.webview.onDidReceiveMessage((msg) => {
+      if (msg && msg.type === 'ready') {
+        this.ready = true;
+        const queued = this.pending;
+        this.pending = [];
+        queued.forEach((m) => void webviewPanel.webview.postMessage(m));
+        return;
+      }
+      this.handler?.(msg);
+    });
+    webviewPanel.onDidDispose(() => {
+      if (this.panel === webviewPanel) {
+        this.panel = undefined;
+        this.ready = false;
+        this.pending = [];
+      }
+    }, null, []);
+  }
+
+  private post(msg: unknown): void {
+    if (!this.panel) {
+      return;
+    }
+    if (!this.ready) {
+      this.pending.push(msg);
+      return;
+    }
+    void this.panel.webview.postMessage(msg);
   }
 
   /** 渲染投影结果 */
@@ -54,22 +98,22 @@ export class ExplainPanel {
       this.setUi(ui);
     }
     this.show();
-    this.panel?.webview.postMessage({ type: 'render', payload });
+    this.post({ type: 'render', payload });
   }
 
   /** 高亮指定语义单元（代码行光标移动时） */
   public focusBlocks(indexes: number[]): void {
-    this.panel?.webview.postMessage({ type: 'focusBlocks', indexes });
+    this.post({ type: 'focusBlocks', indexes });
   }
 
   /** 更新本次分析的 token 用量；传 null 隐藏 */
   public setUsage(usage: TokenUsage | null): void {
-    this.panel?.webview.postMessage({ type: 'usage', usage });
+    this.post({ type: 'usage', usage });
   }
 
   /** 手动重新解析进行中：按钮禁用并转圈 */
   public setBusy(on: boolean): void {
-    this.panel?.webview.postMessage({ type: 'busy', on });
+    this.post({ type: 'busy', on });
   }
 
   public get visible(): boolean {
@@ -705,5 +749,8 @@ const JS = `
   renderBlocks();
   var firstTab = document.querySelector('.tier-tab[data-tier="' + currentTier + '"]');
   if(firstTab) firstTab.classList.add('active');
+
+  // 通知扩展端脚本已就绪，可以开始灌入 render / usage 等消息
+  vscode.postMessage({ type: 'ready' });
 })();
 `;

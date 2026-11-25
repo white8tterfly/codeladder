@@ -2,6 +2,16 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.11] - 2026-11-25
+
+### Added
+
+- Reloading the window now restores the CodeLadder panel with the last analysis result instead of forcing another run. The panel is rebuilt from workspace state without parsing or model calls; if the file changed since the analysis, nothing is restored.
+
+### Fixed
+
+- Python `except` and `finally` bodies were never parsed. tree-sitter stores their suite as a plain `block` child without a `body` field, so only the one-line clause header became a unit and the `return` statements inside the clause were skipped by every tier. Such bodies are now split like any other block, and L1 / L2 ranges cover them.
+
 ## [0.1.10] - 2026-11-25
 
 ### Added

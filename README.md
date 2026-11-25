@@ -89,6 +89,10 @@ trae-cn --install-extension codeladder-<version>.vsix
 5. Click any explanation block to jump to and highlight its code. Move the cursor in the editor to see the matching block light up.
 6. Check the header for the token count of the current file, and click **Re-analyze** to ignore the cache and regenerate every L1 / L2 explanation.
 
+### Reloading the window
+
+If the panel is open when you reload the window, it comes back with the same result: no re-parsing and no model call. The stored view is dropped when the file changed in the meantime, so you never see explanations of stale code; running the command again then reuses everything that did not change.
+
 ### Auto-refresh
 
 Set `codeLadder.autoRefresh.enabled` to `true` to re-run the analysis whenever you save the file shown in the panel. The run is debounced, reuses unchanged groups and sends only the changed ones to the model. The token counter keeps adding up across these runs, so it always shows what the current file has cost so far instead of dropping back to zero; open another file to reset it. Use `codeLadder.autoRefresh.globs` to limit auto-refresh to matching paths.
@@ -198,6 +202,7 @@ The index is capped at 2000 files and 512 KB per file. Longer files are still ex
 ### Token control
 
 - **Reuse first.** Results are cached per file and language. Running the command again on an unchanged file makes no model call.
+- **Restored on reload.** The last rendered panel is kept in workspace state, so a window reload shows the same result again without parsing or calling the model. If the file changed, the stored view is discarded and the normal incremental path applies.
 - **Incremental.** Groups are keyed by their code content, so line shifts do not invalidate them. Only new or changed groups are sent; unchanged L1/L2 text is reused.
 - **Summary fingerprint.** The business context is regenerated only when the file's docstring, module facts, dependency facts or unit skeleton change, not on every internal edit.
 - **Budget.** Only the code for the requested groups is sent. `maxInputChars` caps the payload; groups that do not fit are left for the next run, and the status bar tells you how many were covered.
