@@ -164,6 +164,10 @@ The context card at the top of the panel summarizes this, so the explanation is 
 | `codeLadder.llm.maxInputChars` | `24000` | Maximum code characters sent per request (minimum 2000); overflow is left for the next run |
 | `codeLadder.autoRefresh.enabled` | `false` | Re-run the analysis when the file shown in the panel is saved |
 | `codeLadder.autoRefresh.globs` | empty | Glob patterns that limit auto-refresh, e.g. `src/**/*.py`; empty applies to every supported file |
+| `codeLadder.highlight.color` | empty | Background of the hover highlight on the code side. Any CSS color, e.g. `rgba(250,204,21,0.18)`; empty follows the theme |
+| `codeLadder.highlight.pinColor` | empty | Background of the strong highlight after clicking a block or line badge. Any CSS color; empty follows the theme, and the color is also used for the left accent border |
+
+Highlight colors adapt to the active theme: light themes keep the pale yellow / bright yellow pair, while dark themes use a low-opacity amber so a full highlighted line is no longer glaring. Both layers can be overridden with `codeLadder.highlight.color` and `codeLadder.highlight.pinColor`.
 
 The panel, tier names, project context and generated explanation all follow `codeLadder.language`. Changing the setting while the panel is open regenerates the current file in the new language.
 

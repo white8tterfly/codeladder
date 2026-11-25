@@ -118,6 +118,9 @@ export function activate(context: vscode.ExtensionContext): void {
         analysisCache.clear();
         saveAnalysisCache();
       }
+      if (e.affectsConfiguration('codeLadder.highlight')) {
+        highlight?.refresh();
+      }
       if (!e.affectsConfiguration('codeLadder.language')) {
         return;
       }
@@ -130,6 +133,8 @@ export function activate(context: vscode.ExtensionContext): void {
         void runExplain(editor);
       }
     }),
+    // 主题切换（浅色 ↔ 深色）后换成对应主题的高亮颜色
+    vscode.window.onDidChangeActiveColorTheme(() => highlight?.refresh()),
     vscode.workspace.onDidSaveTextDocument((doc) => {
       if (fromVscodeLanguageId(doc.languageId)) {
         void projectIndex.update(doc.uri);

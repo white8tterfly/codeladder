@@ -2,6 +2,16 @@
 
 All notable changes to CodeLadder are documented in this file.
 
+## [0.1.10] - 2026-11-25
+
+### Added
+
+- `codeLadder.highlight.color` and `codeLadder.highlight.pinColor` let you override the two editor highlight layers: the hover highlight on an explanation block and the stronger highlight applied after clicking a block or line badge. Both accept any CSS color (`#fef9c3`, `rgba(250,204,21,0.18)`, …); leave them empty to follow the active theme. Invalid values fall back to the theme color instead of breaking the highlight.
+
+### Changed
+
+- Editor highlights now follow the active theme. Dark themes use a low-opacity amber (12% for hover, 26% for the pinned block) with a soft teal left border instead of the solid pale / bright yellow pair, so a highlighted block no longer glares on a dark background. Light themes keep the previous colors. Switching themes or changing the settings updates the current highlight immediately, without reopening the file.
+
 ## [0.1.9] - 2026-11-24
 
 ### Added

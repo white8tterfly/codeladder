@@ -11,5 +11,7 @@
   "config.llm.model.desc": "模型名称，如 `deepseek-chat`。",
   "config.llm.maxInputChars.desc": "单次请求最多发送的代码字符数（默认 24000）。只会发送变化过的单元；超出预算的部分留到下一次运行继续补齐。",
   "config.autoRefresh.enabled.desc": "保存文件后自动重新解析面板中正在展示的文件。默认关闭；只会把发生变化的单元送给模型。",
-  "config.autoRefresh.globs.desc": "自动重新解析生效的文件通配符（相对工作区根目录），例如 `src/**/*.py`。留空表示对所有受支持的文件生效。"
+  "config.autoRefresh.globs.desc": "自动重新解析生效的文件通配符（相对工作区根目录），例如 `src/**/*.py`。留空表示对所有受支持的文件生效。",
+  "config.highlight.color.desc": "悬停解释块时整段高亮的背景色。任意 CSS 颜色均可，例如 `#fef9c3` 或 `rgba(250,204,21,0.18)`。留空则跟随当前主题（深色主题下使用低透明度暖黄，不刺眼）。",
+  "config.highlight.pinColor.desc": "点击解释块或行号徽章跳转后强高亮的背景色。任意 CSS 颜色均可。留空则跟随当前主题；该颜色同时用于左侧强调边线。"
 }

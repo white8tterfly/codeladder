@@ -11,5 +11,7 @@
   "config.llm.model.desc": "Model name, e.g. `deepseek-chat`.",
   "config.llm.maxInputChars.desc": "Maximum characters of code sent per request (default 24000). Only changed units are sent; when the budget is exceeded the remaining units are left for the next run.",
   "config.autoRefresh.enabled.desc": "Re-analyze the file shown in the panel automatically after it is saved. Off by default. Only changed groups are sent to the model.",
-  "config.autoRefresh.globs.desc": "Glob patterns of files that auto-refresh applies to, relative to the workspace folder — e.g. `src/**/*.py`. Leave empty to apply to every supported file."
+  "config.autoRefresh.globs.desc": "Glob patterns of files that auto-refresh applies to, relative to the workspace folder — e.g. `src/**/*.py`. Leave empty to apply to every supported file.",
+  "config.highlight.color.desc": "Background color of the highlight shown while hovering an explanation block. Any CSS color works, e.g. `#fef9c3` or `rgba(250,204,21,0.18)`. Leave empty to follow the current theme (a soft, low-opacity amber on dark themes).",
+  "config.highlight.pinColor.desc": "Background color of the strong highlight applied after clicking an explanation block or line badge. Any CSS color works. Leave empty to follow the current theme; this color is also used for the left accent border."
 }
